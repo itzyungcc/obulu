@@ -2,6 +2,8 @@
 import express from "express";
 import config from "./config.js";
 import apiRouter from "./routes/api.js";
+import automationRouter from "./routes/automation.js";
+import { startScheduler, stopScheduler } from "./automation/scheduler.js";
 import { closeDb } from "./db/database.js";
 
 const app = express();
@@ -11,7 +13,7 @@ app.use(express.json());
 app.use((req, res, next) => {
   res.setHeader("Access-Control-Allow-Origin", "*");
   res.setHeader("Access-Control-Allow-Methods", "GET,POST,PUT,PATCH,DELETE,OPTIONS");
-  res.setHeader("Access-Control-Allow-Headers", "Content-Type, Authorization");
+  res.setHeader("Access-Control-Allow-Headers", "Content-Type, Authorization, X-Admin-Key");
   if (req.method === "OPTIONS") return res.sendStatus(204);
   next();
 });
@@ -21,6 +23,7 @@ app.get("/", (req, res) =>
 );
 
 app.use("/api", apiRouter);
+app.use("/api", automationRouter);
 
 // 404 for unknown API routes.
 app.use("/api", (req, res) =>
@@ -38,10 +41,12 @@ app.use((err, req, res, _next) => {
 
 const server = app.listen(config.port, () => {
   console.log(`obulu-api listening on port ${config.port}`);
+  startScheduler();
 });
 
 function shutdown(signal) {
   console.log(`received ${signal}; shutting down`);
+  stopScheduler();
   server.close(() => {
     try { closeDb(); } catch { /* ignore */ }
     process.exit(0);

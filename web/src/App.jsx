@@ -8,6 +8,7 @@ import Search from "./pages/Search.jsx";
 import Leagues from "./pages/Leagues.jsx";
 import MatchAnalysis from "./pages/MatchAnalysis.jsx";
 import About from "./pages/About.jsx";
+import Automation from "./pages/Automation.jsx";
 
 function ScrollToTop() {
   const { pathname } = useLocation();
@@ -30,6 +31,7 @@ export default function App() {
           <Route path="/leagues" element={<Leagues />} />
           <Route path="/match/:id" element={<MatchAnalysis />} />
           <Route path="/about" element={<About />} />
+          <Route path="/automation" element={<Automation />} />
           <Route path="*" element={<Home />} />
         </Routes>
       </main>

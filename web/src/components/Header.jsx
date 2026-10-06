@@ -8,6 +8,7 @@ const LINKS = [
   { to: "/search", label: "Search" },
   { to: "/leagues", label: "Leagues" },
   { to: "/about", label: "About OBULU" },
+  { to: "/automation", label: "Automation" },
 ];
 
 export default function Header() {

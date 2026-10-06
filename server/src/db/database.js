@@ -20,6 +20,24 @@ if (isNew) {
   db.exec(schema);
 }
 
+// Automation tables: applied as a migration on existing databases.
+try {
+  const hasAuto = db
+    .prepare(
+      "SELECT name FROM sqlite_master WHERE type='table' AND name='automation_runs'"
+    )
+    .get();
+  if (!hasAuto) {
+    const autoSchema = fs.readFileSync(
+      path.join(__dirname, "automation-schema.sql"),
+      "utf8"
+    );
+    db.exec(autoSchema);
+  }
+} catch (e) {
+  console.error("[db] automation schema migration failed:", e.message);
+}
+
 export { db };
 
 export function closeDb() {

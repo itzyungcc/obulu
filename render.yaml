@@ -16,6 +16,26 @@ services:
         sync: false # set manually in the Render dashboard (secret)
       - key: SAMPLE_DATA
         value: "false"
+      - key: AUTOMATION_ENABLED
+        value: "false"
+      - key: AUTOMATION_DRY_RUN
+        value: "true"
+      - key: AUTOMATION_INTERVAL_MINUTES
+        value: "30"
+      - key: AUTOMATION_MIN_CONFIDENCE
+        value: "75"
+      - key: AUTOMATION_MIN_DATA_COMPLETENESS
+        value: "70"
+      - key: AUTOMATION_MIN_PROBABILITY
+        value: "65"
+      - key: AUTOMATION_MIN_OUTCOME_MARGIN
+        value: "20"
+      - key: AUTOMATION_MAX_ALERTS_PER_RUN
+        value: "10"
+      - key: TELEGRAM_BOT_TOKEN
+        sync: false
+      - key: TELEGRAM_CHAT_ID
+        sync: false
 
   - type: web
     name: obulu-web
