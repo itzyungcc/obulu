@@ -90,7 +90,7 @@ function OutcomeTag({ outcome, homeName, awayName }) {
 }
 
 function SnapshotCard({ item, onOpen }) {
-  const conf = item.confidence_score;
+  const conf = item.prediction?.confidence?.score;
   return (
     <article className="card snap-card">
       <button
@@ -101,29 +101,29 @@ function SnapshotCard({ item, onOpen }) {
       >
         <p className="match-league">{item.league}</p>
         <p className="snap-teams">
-          {item.home_team} <span className="match-vs">vs</span> {item.away_team}
+          {item.homeTeam} <span className="match-vs">vs</span> {item.awayTeam}
         </p>
         <OutcomeTag
-          outcome={item.predicted_outcome}
-          homeName={item.home_team}
-          awayName={item.away_team}
+          outcome={item.prediction?.predictedOutcome}
+          homeName={item.homeTeam}
+          awayName={item.awayTeam}
         />
         <div className="snap-probs">
           {[
-            { k: "home_win", l: "Home" },
+            { k: "homeWin", l: "Home" },
             { k: "draw", l: "Draw" },
-            { k: "away_win", l: "Away" },
+            { k: "awayWin", l: "Away" },
           ].map((o) => (
             <span key={o.k} className="snap-prob">
               <span className="snap-prob-l">{o.l}</span>
-              <strong>{Math.round(toPct(item[o.k]))}%</strong>
+              <strong>{Math.round(toPct(item.prediction?.[o.k]))}%</strong>
             </span>
           ))}
         </div>
         <div className="snap-foot">
           <span className="muted">
             Model confidence:{" "}
-            <strong>{item.confidence_label || "—"}</strong>
+            <strong>{item.prediction?.confidence?.label || "—"}</strong>
             {conf != null ? ` (${Math.round(toPct(conf))})` : ""}
           </span>
           <StatusChip status={item.status} />
@@ -182,8 +182,8 @@ function SnapshotModal({ id, onClose }) {
         className="modal"
         role="dialog"
         aria-modal="true"
-        aria-label={`Prediction details: ${snap?.home_team || ""} vs ${
-          snap?.away_team || ""
+        aria-label={`Prediction details: ${snap?.homeTeam || ""} vs ${
+          snap?.awayTeam || ""
         }`}
         onClick={(e) => e.stopPropagation()}
       >
@@ -200,8 +200,8 @@ function SnapshotModal({ id, onClose }) {
         {state === "ready" && snap && (
           <>
             <h2>
-              {snap.home_team} <span className="match-vs">vs</span>{" "}
-              {snap.away_team}
+              {snap.homeTeam} <span className="match-vs">vs</span>{" "}
+              {snap.awayTeam}
             </h2>
             <p className="muted">
               {snap.league}
@@ -213,58 +213,58 @@ function SnapshotModal({ id, onClose }) {
               <div className="kv">
                 <span className="kv-k">OBULU pick</span>
                 <span className="kv-v">
-                  {snap.predicted_outcome === "HOME"
-                    ? snap.home_team
-                    : snap.predicted_outcome === "AWAY"
-                    ? snap.away_team
+                  {snap.prediction?.predictedOutcome === "HOME"
+                    ? snap.homeTeam
+                    : snap.prediction?.predictedOutcome === "AWAY"
+                    ? snap.awayTeam
                     : "Draw"}
                 </span>
               </div>
               <div className="kv">
                 <span className="kv-k">Home win</span>
-                <span className="kv-v">{Math.round(toPct(snap.home_win))}%</span>
+                <span className="kv-v">{Math.round(toPct(snap.prediction?.homeWin))}%</span>
               </div>
               <div className="kv">
                 <span className="kv-k">Draw</span>
-                <span className="kv-v">{Math.round(toPct(snap.draw))}%</span>
+                <span className="kv-v">{Math.round(toPct(snap.prediction?.draw))}%</span>
               </div>
               <div className="kv">
                 <span className="kv-k">Away win</span>
-                <span className="kv-v">{Math.round(toPct(snap.away_win))}%</span>
+                <span className="kv-v">{Math.round(toPct(snap.prediction?.awayWin))}%</span>
               </div>
               <div className="kv">
                 <span className="kv-k">Model confidence</span>
                 <span className="kv-v">
-                  {snap.confidence_label || "—"}
-                  {snap.confidence_score != null
-                    ? ` (${Math.round(toPct(snap.confidence_score))})`
+                  {snap.prediction?.confidence?.label || "—"}
+                  {snap.prediction?.confidence?.score != null
+                    ? ` (${Math.round(toPct(snap.prediction.confidence.score))})`
                     : ""}
                 </span>
               </div>
               <div className="kv">
                 <span className="kv-k">Expected goals (xG)</span>
                 <span className="kv-v">
-                  {snap.expected_home_goals ?? "—"} –{" "}
-                  {snap.expected_away_goals ?? "—"}
+                  {snap.prediction?.expectedGoals?.home ?? "—"} –{" "}
+                  {snap.prediction?.expectedGoals?.away ?? "—"}
                 </span>
               </div>
               <div className="kv">
                 <span className="kv-k">Model version</span>
-                <span className="kv-v">{snap.model_version || "—"}</span>
+                <span className="kv-v">{snap.modelVersion || "—"}</span>
               </div>
               <div className="kv">
                 <span className="kv-k">Blended with odds</span>
                 <span className="kv-v">
-                  {snap.blended_with_odds ? "Yes" : "No"}
+                  {snap.prediction?.blendedWithOdds ? "Yes" : "No"}
                 </span>
               </div>
             </div>
 
-            {Array.isArray(snap.factors) && snap.factors.length > 0 && (
+            {Array.isArray(snap.prediction?.factors) && snap.prediction.factors.length > 0 && (
               <div className="factors-block">
                 <h3>Why this prediction</h3>
                 <ul className="factors">
-                  {snap.factors.map((f, i) => (
+                  {snap.prediction.factors.map((f, i) => (
                     <li key={i}>{typeof f === "string" ? f : f.text || JSON.stringify(f)}</li>
                   ))}
                 </ul>
@@ -277,7 +277,7 @@ function SnapshotModal({ id, onClose }) {
                 <p>
                   Final score:{" "}
                   <strong>
-                    {snap.actual_home_score ?? "–"} – {snap.actual_away_score ?? "–"}
+                    {snap.actual?.homeScore ?? "–"} – {snap.actual?.awayScore ?? "–"}
                   </strong>{" "}
                   <StatusChip status={status} />
                 </p>
