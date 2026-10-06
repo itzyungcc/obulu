@@ -225,11 +225,15 @@ router.patch(
       updated.push(key);
     }
     // If the enabled flag changed, start or stop the scheduler immediately
-    // so no redeploy is needed.
-    if (updated.includes("enabled")) {
+    // so no redeploy is needed. If the interval changed while running,
+    // restart the scheduler so the new cadence takes effect at once
+    // (setInterval otherwise keeps the old cadence until a restart).
+    if (updated.includes("enabled") || updated.includes("intervalMinutes")) {
       const effective = loadEffectiveConfig(db);
-      if (effective.enabled) startScheduler();
-      else stopScheduler();
+      if (effective.enabled) {
+        stopScheduler();
+        startScheduler();
+      } else stopScheduler();
     }
     res.json({ ok: true, updated, config: publicConfig() });
   })
