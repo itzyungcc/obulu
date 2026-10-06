@@ -12,9 +12,39 @@ import { sameTeam } from "./normalizer.js";
 const log = (...a) => console.log("[Automation][matcher]", ...a);
 
 export async function matchFixture(normalized) {
-  const provider = getProvider();
+  // Fast path: the collector already holds the authoritative provider fixture
+  // (fetched seconds ago). Re-fetching via /matches/{id} is wasteful and
+  // unreliable on restricted API tiers, so we validate the data we have.
+  const fixture = normalized.fixture;
+  if (fixture && fixture.id) {
+    if (fixture.status !== "NS") {
+      return unmatched(
+        normalized,
+        "FIXTURE_MATCH_FAILED",
+        `fixture status is ${fixture.status}, not pre-match`
+      );
+    }
+    // Sanity: fixture teams must agree with the discovered names.
+    const homeOk = sameTeam(fixture.home?.name, normalized.homeTeam);
+    const awayOk = sameTeam(fixture.away?.name, normalized.awayTeam);
+    if (!homeOk || !awayOk) {
+      return unmatched(
+        normalized,
+        "FIXTURE_MATCH_FAILED",
+        "fixture team names disagree with discovered record"
+      );
+    }
+    return {
+      outcome: "matched",
+      fixtureId: String(fixture.id),
+      confidence: 1.0,
+      fixture,
+      reason: null,
+    };
+  }
 
-  // Fast path: provider-native fixture with a valid id.
+  // Fallback: try a live re-fetch if we only have an id (defensive).
+  const provider = getProvider();
   if (normalized.sourceMatchId && provider) {
     try {
       const live = await provider.getMatch(normalized.sourceMatchId);
@@ -28,20 +58,10 @@ export async function matchFixture(normalized) {
           `fixture status is ${live.status}, not pre-match`
         );
       }
-      // Sanity: provider's own teams must agree with the discovered names.
-      const homeOk = sameTeam(live.home?.name, normalized.homeTeam);
-      const awayOk = sameTeam(live.away?.name, normalized.awayTeam);
-      if (!homeOk || !awayOk) {
-        return unmatched(
-          normalized,
-          "FIXTURE_MATCH_FAILED",
-          "provider team names disagree with discovered fixture"
-        );
-      }
       return {
         outcome: "matched",
         fixtureId: String(live.id),
-        confidence: 1.0,
+        confidence: 0.9,
         fixture: live,
         reason: null,
       };

@@ -80,5 +80,6 @@ export function normalizeMatch(raw) {
     status: raw.status ?? "NS",
     sourceUrl: raw.sourceUrl ?? null,
     collectedAt: new Date().toISOString(),
+    fixture: raw.fixture ?? null, // raw provider fixture for the matcher
   };
 }
