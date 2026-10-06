@@ -301,7 +301,8 @@ async function processOne({ id: runId, norm, config, counts, getAlertsToday, bum
   log(`alert sent: ${analysis.match.home.name} vs ${analysis.match.away.name}`);
   } catch (e) {
     // Catch-all for any failure in the post-match pipeline stages.
-    markError(`PIPELINE_FAILED: ${e.code || e.message}`);
+    const detail = `${e.code || e.name}: ${e.message}\n${(e.stack || "").split("\n").slice(1, 4).join("\n")}`;
+    markError(`PIPELINE_FAILED: ${detail}`);
     throw e;
   }
 }
