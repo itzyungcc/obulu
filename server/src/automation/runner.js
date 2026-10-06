@@ -162,65 +162,80 @@ async function processOne({ id: runId, norm, config, counts, getAlertsToday, bum
     );
   const automationMatchId = Number(matchRow.lastInsertRowid);
 
-  if (matched.outcome !== "matched") {
-    counts.rejected++;
-    return;
-  }
-  counts.matched++;
+  const markError = (msg) => {
+    try {
+      db.prepare(
+        `UPDATE automation_matches SET match_outcome = 'error', match_reason = ? WHERE id = ?`
+      ).run(String(msg).slice(0, 500), automationMatchId);
+    } catch {
+      /* ignore */
+    }
+  };
 
-  // ---- Analyze (ONE authoritative engine) ----
-  let analysis;
   try {
-    analysis = await analyzeFixture(matched.fixture);
-  } catch (e) {
-    db.prepare(
-      `UPDATE automation_matches SET match_outcome = 'error', match_reason = ? WHERE id = ?`
-    ).run(`PREDICTION_FAILED: ${e.code || e.message}`, automationMatchId);
-    throw e;
-  }
-  counts.analyzed++;
+    if (matched.outcome !== "matched") {
+      counts.rejected++;
+      return;
+    }
+    counts.matched++;
 
-  // ---- Qualify ----
-  const q = qualify({
-    prediction: analysis.prediction,
-    match: {
-      league: analysis.match.league?.name,
-      leagueId: analysis.match.league?.id,
-      kickoff: analysis.match.kickoff,
-      status: "NS",
-    },
-    config,
-  });
+    // ---- Analyze (ONE authoritative engine) ----
+    let analysis;
+    try {
+      analysis = await analyzeFixture(matched.fixture);
+    } catch (e) {
+      markError(`PREDICTION_FAILED: ${e.code || e.message}`);
+      throw e;
+    }
+    counts.analyzed++;
 
-  // ---- Snapshot (immutable) ----
-  const p = analysis.prediction;
-  const predRow = db
-    .prepare(
-      `INSERT INTO automation_predictions
-         (automation_match_id, model_version, home_probability, draw_probability,
-          away_probability, predicted_outcome, confidence, data_completeness,
-          expected_home_goals, expected_away_goals, factors, blended_with_odds,
-          qualified, qualification_reason, evaluated_at)
-       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
-    )
-    .run(
-      automationMatchId,
-      analysis.modelVersion,
-      p.homeWin,
-      p.draw,
-      p.awayWin,
-      p.predictedOutcome,
-      p.confidence,
-      p.dataCompleteness,
-      p.expectedHomeGoals,
-      p.expectedAwayGoals,
-      JSON.stringify(p.factors),
-      p.blendedWithOdds ? 1 : 0,
-      q.qualified ? 1 : 0,
-      q.qualified ? "passed all configured criteria" : q.reasons.join("; "),
-      new Date().toISOString()
-    );
-  const predictionId = Number(predRow.lastInsertRowid);
+    // ---- Qualify ----
+    const q = qualify({
+      prediction: analysis.prediction,
+      match: {
+        league: analysis.match.league?.name,
+        leagueId: analysis.match.league?.id,
+        kickoff: analysis.match.kickoff,
+        status: "NS",
+      },
+      config,
+    });
+
+    // ---- Snapshot (immutable) ----
+    const p = analysis.prediction;
+    let predictionId;
+    try {
+      const predRow = db
+        .prepare(
+          `INSERT INTO automation_predictions
+             (automation_match_id, model_version, home_probability, draw_probability,
+              away_probability, predicted_outcome, confidence, data_completeness,
+              expected_home_goals, expected_away_goals, factors, blended_with_odds,
+              qualified, qualification_reason, evaluated_at)
+           VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
+        )
+        .run(
+          automationMatchId,
+          analysis.modelVersion,
+          p.homeWin,
+          p.draw,
+          p.awayWin,
+          p.predictedOutcome,
+          p.confidence,
+          p.dataCompleteness,
+          p.expectedHomeGoals,
+          p.expectedAwayGoals,
+          JSON.stringify(p.factors),
+          p.blendedWithOdds ? 1 : 0,
+          q.qualified ? 1 : 0,
+          q.qualified ? "passed all configured criteria" : q.reasons.join("; "),
+          new Date().toISOString()
+        );
+      predictionId = Number(predRow.lastInsertRowid);
+    } catch (e) {
+      markError(`SNAPSHOT_FAILED: ${e.message}`);
+      throw e;
+    }
 
   if (!q.qualified) {
     counts.rejected++;
@@ -284,6 +299,11 @@ async function processOne({ id: runId, norm, config, counts, getAlertsToday, bum
   counts.alerted++;
   bumpAlerts();
   log(`alert sent: ${analysis.match.home.name} vs ${analysis.match.away.name}`);
+  } catch (e) {
+    // Catch-all for any failure in the post-match pipeline stages.
+    markError(`PIPELINE_FAILED: ${e.code || e.message}`);
+    throw e;
+  }
 }
 
 function finishRun(id, counts, status, error) {
