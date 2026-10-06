@@ -8,11 +8,12 @@ import { Router } from "express";
 import { db } from "../db/database.js";
 import {
   loadAutomationConfig,
+  loadEffectiveConfig,
   PUBLIC_CONFIG_KEYS,
   MUTABLE_CONFIG_KEYS,
 } from "../automation/automationConfig.js";
 import { runAutomation } from "../automation/runner.js";
-import { schedulerStatus } from "../automation/scheduler.js";
+import { schedulerStatus, startScheduler, stopScheduler } from "../automation/scheduler.js";
 
 const router = Router();
 
@@ -33,24 +34,9 @@ function requireAdmin(req, res, next) {
 }
 
 function publicConfig() {
-  const config = loadAutomationConfig();
+  const config = loadEffectiveConfig(db);
   const out = {};
   for (const k of PUBLIC_CONFIG_KEYS) out[k] = config[k];
-
-  // Overlay runtime overrides stored in automation_config.
-  try {
-    const rows = db.prepare("SELECT key, value FROM automation_config").all();
-    for (const r of rows) {
-      if (!PUBLIC_CONFIG_KEYS.includes(r.key)) continue;
-      try {
-        out[r.key] = JSON.parse(r.value);
-      } catch {
-        out[r.key] = r.value;
-      }
-    }
-  } catch {
-    /* table may not exist yet on very old DBs */
-  }
 
   // Telegram configured? (boolean only — never the secret)
   out.telegramConfigured = Boolean(config.telegramBotToken && config.telegramChatId);
@@ -61,7 +47,7 @@ function publicConfig() {
 router.get(
   "/automation/status",
   asyncHandler(async (_req, res) => {
-    const config = loadAutomationConfig();
+    const config = loadEffectiveConfig(db);
     const lastRun = db
       .prepare("SELECT * FROM automation_runs ORDER BY started_at DESC LIMIT 1")
       .get() || null;
@@ -237,6 +223,13 @@ router.patch(
          ON CONFLICT(key) DO UPDATE SET value = excluded.value, updated_at = excluded.updated_at`
       ).run(key, JSON.stringify(body[key]), now);
       updated.push(key);
+    }
+    // If the enabled flag changed, start or stop the scheduler immediately
+    // so no redeploy is needed.
+    if (updated.includes("enabled")) {
+      const effective = loadEffectiveConfig(db);
+      if (effective.enabled) startScheduler();
+      else stopScheduler();
     }
     res.json({ ok: true, updated, config: publicConfig() });
   })

@@ -2,15 +2,16 @@
 // Runs the automation pipeline on a configurable interval. Default 30 min.
 // The runner's lock (in-memory + DB) guarantees no overlapping runs.
 
-import { loadAutomationConfig } from "./automationConfig.js";
+import { loadEffectiveConfig } from "./automationConfig.js";
 import { runAutomation } from "./runner.js";
+import { db } from "../db/database.js";
 
 const log = (...a) => console.log("[Automation][scheduler]", ...a);
 
 let timer = null;
 
 export function startScheduler() {
-  const config = loadAutomationConfig();
+  const config = loadEffectiveConfig(db);
   if (!config.enabled) {
     log("scheduler not started: AUTOMATION_ENABLED is false");
     return false;
