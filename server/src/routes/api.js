@@ -103,6 +103,34 @@ router.get(
   })
 );
 
+// ---------------------------------------------------------- fixtures/all ---
+// Unified fixture browser used by the frontend. On the live backend this
+// returns upcoming fixtures (the provider has no historical archive);
+// the offline snapshot build overrides this with its 2024/25 archive.
+router.get(
+  "/fixtures/all",
+  requireProvider,
+  asyncHandler(async (req, res) => {
+    const { league, date, team } = req.query;
+    if (date !== undefined && !DATE_RE.test(String(date))) {
+      return badRequest(res, 'Query parameter "date" must be YYYY-MM-DD.');
+    }
+    const key = `fixtures:all:${league || "all"}:${date || "all"}:${team || "all"}`;
+    let fixtures = cacheGet(key);
+    if (!fixtures) {
+      const hasFilter = league || date || team;
+      fixtures = await req.provider.getUpcomingFixtures({
+        league: league || undefined,
+        date: date || undefined,
+        team: team || undefined,
+      });
+      if (!hasFilter) fixtures = fixtures.slice(0, 60);
+      cacheSet(key, fixtures, "fixtures");
+    }
+    res.json({ fixtures, sampleData: isSample() });
+  })
+);
+
 // ---------------------------------------------------------- teams/search ---
 router.get(
   "/teams/search",
