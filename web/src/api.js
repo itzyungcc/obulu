@@ -24,7 +24,8 @@ const OFFLINE = import.meta.env.VITE_OBULU_OFFLINE === "1";
 
 export async function apiFetch(path, params = {}) {
   if (OFFLINE) return localApiFetch(path, params);
-  const entries = Object.entries(params).filter(
+  const { method, body: reqBody, headers, ...query } = params;
+  const entries = Object.entries(query).filter(
     ([, v]) => v !== "" && v !== null && v !== undefined
   );
   const qs = new URLSearchParams(entries).toString();
@@ -32,7 +33,15 @@ export async function apiFetch(path, params = {}) {
 
   let res;
   try {
-    res = await fetch(url);
+    res = await fetch(url, {
+      ...(method ? { method } : {}),
+      ...(reqBody !== undefined
+        ? {
+            body: typeof reqBody === "string" ? reqBody : JSON.stringify(reqBody),
+            headers: { "Content-Type": "application/json", ...(headers || {}) },
+          }
+        : {}),
+    });
   } catch {
     throw new ApiError(
       0,
