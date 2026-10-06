@@ -12,6 +12,7 @@ import Live from "./pages/Live.jsx";
 import About from "./pages/About.jsx";
 import Automation from "./pages/Automation.jsx";
 import Jackpot from "./pages/Jackpot.jsx";
+import Chat from "./pages/Chat.jsx";
 
 function ScrollToTop() {
   const { pathname } = useLocation();
@@ -38,6 +39,7 @@ export default function App() {
           <Route path="/about" element={<About />} />
           <Route path="/automation" element={<Automation />} />
           <Route path="/jackpot" element={<Jackpot />} />
+          <Route path="/chat" element={<Chat />} />
           <Route path="*" element={<Home />} />
         </Routes>
       </main>

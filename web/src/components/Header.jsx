@@ -12,6 +12,7 @@ const LINKS = [
   { to: "/about", label: "About OBULU" },
   { to: "/automation", label: "Automation" },
   { to: "/jackpot", label: "Jackpot" },
+  { to: "/chat", label: "Assistant" },
 ];
 
 export default function Header() {
