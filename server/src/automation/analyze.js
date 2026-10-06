@@ -5,6 +5,25 @@
 
 import { getProvider } from "../providers/index.js";
 import { predictMatch, MODEL_VERSION } from "../model/poisson.js";
+import { cacheGet, cacheSet } from "../cache.js";
+
+async function cachedTeamStats(provider, teamId, leagueId) {
+  const key = `teamstats:${teamId}:${leagueId}`;
+  const hit = cacheGet(key);
+  if (hit) return hit;
+  const stats = await provider.getTeamStats(teamId, leagueId);
+  cacheSet(key, stats, "teamStats");
+  return stats;
+}
+
+async function cachedLeagueAvgs(provider, leagueId) {
+  const key = `leagueavgs:${leagueId}`;
+  const hit = cacheGet(key);
+  if (hit) return hit;
+  const avgs = await provider.getLeagueAvgs(leagueId);
+  if (avgs) cacheSet(key, avgs, "standings");
+  return avgs;
+}
 
 export async function analyzeFixture(fixture) {
   const provider = getProvider();
@@ -29,8 +48,8 @@ export async function analyzeFixture(fixture) {
   let homeStats, awayStats;
   try {
     [homeStats, awayStats] = await Promise.all([
-      provider.getTeamStats(match.home.id, match.league.id),
-      provider.getTeamStats(match.away.id, match.league.id),
+      cachedTeamStats(provider, match.home.id, match.league.id),
+      cachedTeamStats(provider, match.away.id, match.league.id),
     ]);
   } catch (e) {
     const err = new Error(`PREDICTION_FAILED: team stats failed: ${e.message}`);
@@ -41,7 +60,7 @@ export async function analyzeFixture(fixture) {
   // Best-effort auxiliaries — prediction works without them.
   let leagueAvgs = null;
   try {
-    leagueAvgs = await provider.getLeagueAvgs(match.league.id);
+    leagueAvgs = await cachedLeagueAvgs(provider, match.league.id);
   } catch {
     /* optional */
   }

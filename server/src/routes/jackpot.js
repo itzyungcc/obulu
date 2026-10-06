@@ -8,8 +8,22 @@ import express from "express";
 import { getProvider } from "../providers/index.js";
 import { sameTeam, normalizeTeamName } from "../automation/normalizer.js";
 import { analyzeFixture } from "../automation/analyze.js";
+import { cacheGet, cacheSet } from "../cache.js";
 
 const router = express.Router();
+
+// Fixture cache: 7-day window, 15-min TTL. The automation scheduler also
+// refreshes provider data on its own cadence; this keeps jackpot analyses
+// fast without hammering the rate-limited provider API.
+const FIXTURE_CACHE_KEY = "jackpot:fixtures:7d";
+
+async function getUpcomingFixturesCached(provider) {
+  const hit = cacheGet(FIXTURE_CACHE_KEY);
+  if (hit) return hit;
+  const fixtures = (await provider.getUpcomingFixtures()) || [];
+  cacheSet(FIXTURE_CACHE_KEY, fixtures, "fixtures");
+  return fixtures;
+}
 
 // Parse one pasted line into {home, away}. Accepts "Home vs Away",
 // "Home v Away", "Home - Away", "Home – Away".
@@ -40,10 +54,11 @@ router.post("/analyze", async (req, res) => {
       return res.status(503).json({ error: "PROVIDER_UNAVAILABLE" });
     }
 
-    // One fetch of upcoming fixtures (7-day window covers weekend jackpots).
+    // One fetch of upcoming fixtures (7-day window covers weekend jackpots),
+    // served from cache when fresh.
     let fixtures = [];
     try {
-      fixtures = (await provider.getUpcomingFixtures()) || [];
+      fixtures = await getUpcomingFixturesCached(provider);
     } catch (e) {
       return res.status(503).json({ error: "PROVIDER_UNAVAILABLE", detail: e.message });
     }
