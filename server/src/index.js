@@ -3,6 +3,7 @@ import express from "express";
 import config from "./config.js";
 import apiRouter from "./routes/api.js";
 import automationRouter from "./routes/automation.js";
+import jackpotRouter from "./routes/jackpot.js";
 import { startScheduler, stopScheduler } from "./automation/scheduler.js";
 import { closeDb } from "./db/database.js";
 
@@ -24,6 +25,7 @@ app.get("/", (req, res) =>
 
 app.use("/api", apiRouter);
 app.use("/api", automationRouter);
+app.use("/api/jackpot", jackpotRouter);
 
 // 404 for unknown API routes.
 app.use("/api", (req, res) =>

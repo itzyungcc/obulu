@@ -1176,3 +1176,60 @@ select:focus {
   font-size: 0.85rem;
 }
 .btn-small:hover { background: #c9a227; color: #0d0d0c; }
+
+/* Jackpot tab */
+.jackpot-input {
+  width: 100%;
+  background: #141412;
+  border: 1px solid #2a2a26;
+  border-radius: 10px;
+  color: #fff;
+  padding: 0.9rem;
+  font-size: 1rem;
+  font-family: inherit;
+  resize: vertical;
+  margin: 0.75rem 0;
+}
+.jackpot-input:focus { outline: none; border-color: #c9a227; }
+.jackpot-input::placeholder { color: #6b6b64; }
+.jackpot-results { margin-top: 1.5rem; }
+.auto-num {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  min-width: 1.8rem;
+  height: 1.8rem;
+  background: #2a2a26;
+  color: #c9a227;
+  border-radius: 50%;
+  font-weight: 700;
+  font-size: 0.85rem;
+  margin-right: 0.6rem;
+  flex-shrink: 0;
+}
+.auto-card-head { align-items: center; }
+.pick-badge {
+  font-weight: 800;
+  font-size: 1.1rem;
+  padding: 0.4rem 0.9rem;
+  border-radius: 8px;
+  white-space: nowrap;
+}
+.pick-1 { background: #c9a227; color: #0d0d0c; }
+.pick-X { background: #2a2a26; color: #c9a227; border: 1px solid #c9a227; }
+.pick-2 { background: #fff; color: #0d0d0c; }
+.prob-row { display: grid; gap: 0.4rem; margin: 0.8rem 0; }
+.prob { display: flex; align-items: center; gap: 0.6rem; }
+.prob-label {
+  width: 1.4rem;
+  text-align: center;
+  font-weight: 700;
+  color: #c9a227;
+  font-size: 0.9rem;
+}
+.prob-bar { flex: 1; height: 8px; background: #2a2a26; border-radius: 4px; overflow: hidden; }
+.prob-fill { height: 100%; background: #c9a227; border-radius: 4px; transition: width 0.4s; }
+.prob-val { min-width: 3rem; text-align: right; color: #fff; font-weight: 600; font-size: 0.9rem; }
+.auto-sub { color: #bdbdb4; font-size: 0.85rem; margin-top: 0.3rem; }
+.auto-sub.warn { color: #e0a030; }
+.auto-sub strong { color: #fff; }

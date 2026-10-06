@@ -38,11 +38,36 @@ const ALIASES = {
   "dortmund": "borussia dortmund",
   "rb leipzig": "rasenballsport leipzig",
   "leverkusen": "bayer leverkusen",
+  // SportyBet / bookmaker name variants
+  "cologne": "1 koln",
+  "koln": "1 koln",
+  "borussia mgladbach": "borussia monchengladbach",
+  "monchengladbach": "borussia monchengladbach",
+  "istanbul bb": "istanbul basaksehir",
+  "istanbul basaksehir fk": "istanbul basaksehir",
+  "como 1907": "como 1907",
+  "paris fc": "paris fc",
 };
 
 export function normalizeTeamName(raw) {
   if (!raw) return "";
-  let s = String(raw).toLowerCase().trim();
+  // Turkish dotted capital İ lowercases to i+combining dot; normalize first.
+  let s = String(raw).replace(/İ/g, "I").toLowerCase().trim();
+  // Transliterate common diacritics before stripping (Köln -> koln, etc.)
+  s = s
+    .replace(/[àáâãäå]/g, "a")
+    .replace(/[èéêë]/g, "e")
+    .replace(/[ìíîï]/g, "i")
+    .replace(/[òóôõö]/g, "o")
+    .replace(/[ùúûü]/g, "u")
+    .replace(/ß/g, "ss")
+    .replace(/ñ/g, "n")
+    .replace(/ç/g, "c")
+    .replace(/ı/g, "i")
+    .replace(/İ/g, "i")
+    .replace(/ğ/g, "g")
+    .replace(/ş/g, "s")
+    .replace(/[´`]/g, ""); // stray accent marks (e.g. M´gladbach)
   s = s.replace(/[.'`]/g, "");
   s = s.replace(/&/g, "and");
   s = s.replace(/[^a-z0-9\s-]/g, " ");
