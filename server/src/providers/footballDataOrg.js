@@ -9,7 +9,26 @@ export const sampleData = false;
 const BASE = "https://api.football-data.org/v4";
 const idOf = (id) => String(id).replace(/^fd-/, "");
 
+// Free-tier rate limit: 10 requests/minute. We stay at 8/min for safety.
+// Simple sliding-window limiter shared by all requests from this process.
+const requestTimes = [];
+const MAX_REQ_PER_MIN = 8;
+
+async function respectRateLimit() {
+  const now = Date.now();
+  while (requestTimes.length && requestTimes[0] <= now - 60000) {
+    requestTimes.shift();
+  }
+  if (requestTimes.length >= MAX_REQ_PER_MIN) {
+    const waitMs = requestTimes[0] + 60000 - now + 200;
+    if (waitMs > 0) await new Promise((r) => setTimeout(r, waitMs));
+    return respectRateLimit();
+  }
+  requestTimes.push(Date.now());
+}
+
 async function req(path, params = {}) {
+  await respectRateLimit();
   const url = new URL(BASE + path);
   for (const [k, v] of Object.entries(params)) {
     if (v !== undefined && v !== null && v !== "") url.searchParams.set(k, String(v));

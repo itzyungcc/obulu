@@ -14,17 +14,29 @@ export async function analyzeFixture(fixture) {
     throw err;
   }
 
-  const match = fixture?.id ? await provider.getMatch(fixture.id) : fixture;
-  if (!match) {
-    const err = new Error("PREDICTION_FAILED");
+  // The fixture from the collector is already complete (id, home, away,
+  // league, kickoff). Only re-fetch if we were given a bare id string.
+  const match =
+    typeof fixture === "string" ? await provider.getMatch(fixture) : fixture;
+  if (!match || !match.home?.id || !match.away?.id) {
+    const err = new Error(
+      `PREDICTION_FAILED: incomplete fixture data for ${typeof fixture === "string" ? fixture : fixture?.id}`
+    );
     err.code = "PREDICTION_FAILED";
     throw err;
   }
 
-  const [homeStats, awayStats] = await Promise.all([
-    provider.getTeamStats(match.home.id, match.league.id),
-    provider.getTeamStats(match.away.id, match.league.id),
-  ]);
+  let homeStats, awayStats;
+  try {
+    [homeStats, awayStats] = await Promise.all([
+      provider.getTeamStats(match.home.id, match.league.id),
+      provider.getTeamStats(match.away.id, match.league.id),
+    ]);
+  } catch (e) {
+    const err = new Error(`PREDICTION_FAILED: team stats failed: ${e.message}`);
+    err.code = "PREDICTION_FAILED";
+    throw err;
+  }
 
   // Best-effort auxiliaries — prediction works without them.
   let leagueAvgs = null;
