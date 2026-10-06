@@ -5,7 +5,7 @@ export default function Footer() {
     <footer className="site-footer">
       <div className="container footer-inner">
         <p className="footer-brand">
-          <span aria-hidden="true">🌹</span> <strong>OBULU</strong> — Football
+          <strong>OBULU</strong> — Football
           Comparison &amp; Prediction
         </p>
         <p className="footer-note">

@@ -1,5 +1,6 @@
 import { useState } from "react";
 import { NavLink, Link } from "react-router-dom";
+import LogoMark from "./LogoMark.jsx";
 
 const LINKS = [
   { to: "/", label: "Home", end: true },
@@ -17,7 +18,7 @@ export default function Header() {
       <div className="container header-inner">
         <Link to="/" className="brand" aria-label="OBULU — home">
           <span className="brand-mark" aria-hidden="true">
-            🌹
+            <LogoMark size={34} />
           </span>
           <span className="brand-name">OBULU</span>
         </Link>

@@ -1,27 +1,28 @@
 /* ============================================================
    OBULU design system — Football Comparison & Prediction
-   Identity: red #C8102E · white #FFFFFF · green #0E7A3D
+   Identity: classic gold #C9A227 · black #0D0D0C
    ============================================================ */
 
 :root {
-  --red: #c8102e;
-  --red-dark: #a50d26;
+  --gold: #c9a227;
+  --gold-light: #e6c76a;
+  --gold-dark: #8a6d1a;
+  --black: #0d0d0c;
   --white: #ffffff;
-  --green: #0e7a3d;
-  --green-dark: #0a5f30;
-  --ink: #1a1d21;
-  --muted: #5b6470;
-  --bg: #faf7f4;
-  --card: #ffffff;
-  --border: #e7e0d6;
-  --track: #efe9e0;
-  --amber: #f59e0b;
-  --amber-dark: #b45309;
+  --ink: #ffffff;
+  --muted: #ffffff;
+  --bg: #0d0d0c;
+  --card: #171713;
+  --border: #2c2a22;
+  --track: #221f18;
+  --amber: #c9a227;
+  --amber-dark: #8a6d1a;
   --radius: 14px;
-  --shadow: 0 2px 10px rgba(26, 29, 33, 0.08);
+  --shadow: 0 2px 12px rgba(0, 0, 0, 0.45);
   --transition: 200ms ease;
   --font: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica,
     Arial, sans-serif;
+  --serif: Georgia, "Times New Roman", serif;
 }
 
 *,
@@ -66,17 +67,17 @@ p {
 }
 
 a {
-  color: var(--red);
+  color: var(--white);
   text-decoration: none;
   transition: color var(--transition);
 }
 a:hover {
-  color: var(--red-dark);
+  color: var(--white);
   text-decoration: underline;
 }
 
 :focus-visible {
-  outline: 2px solid var(--green);
+  outline: 2px solid var(--gold);
   outline-offset: 2px;
   border-radius: 4px;
 }
@@ -103,17 +104,6 @@ img {
   color: var(--muted);
 }
 
-/* ---------- decorative rose overlay ---------- */
-.rose-bg {
-  position: fixed;
-  inset: 0;
-  z-index: 0;
-  pointer-events: none;
-  opacity: 0.05;
-  background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='240' height='240' viewBox='0 0 240 240' fill='none' stroke='%23C8102E' stroke-width='2'%3E%3Ccircle cx='120' cy='120' r='90'/%3E%3Cpath d='M120 40c40 10 70 40 70 80s-30 70-70 70-70-30-70-70c0-30 20-55 50-65'/%3E%3Cpath d='M120 70c25 8 42 25 42 50s-17 42-42 42-42-17-42-42c0-18 12-33 30-38'/%3E%3Cpath d='M120 95c13 4 22 13 22 25s-9 21-22 21-22-9-22-21c0-9 6-17 14-20'/%3E%3C/svg%3E");
-  background-size: 300px 300px;
-  background-repeat: repeat;
-}
 
 /* ---------- layout ---------- */
 .app {
@@ -159,8 +149,8 @@ img {
 
 /* ---------- header ---------- */
 .site-header {
-  background: var(--white);
-  border-bottom: 3px solid var(--red);
+  background: #0a0a09;
+  border-bottom: 3px solid var(--gold);
   box-shadow: var(--shadow);
   position: sticky;
   top: 0;
@@ -186,13 +176,17 @@ img {
 }
 .brand:hover {
   text-decoration: none;
-  color: var(--red);
+  color: var(--white);
 }
 .brand-mark {
-  font-size: 1.6rem;
+  display: inline-flex;
+  line-height: 0;
 }
 .brand-name {
-  color: var(--red);
+  color: var(--white);
+  font-family: var(--serif);
+  letter-spacing: 0.18em;
+  font-weight: bold;
 }
 
 .nav-toggle {
@@ -201,12 +195,12 @@ img {
   justify-content: center;
   width: 44px;
   height: 44px;
-  border: 1px solid var(--border);
+  border: 1px solid var(--gold-dark);
   border-radius: 10px;
-  background: var(--white);
+  background: var(--card);
   font-size: 1.4rem;
   cursor: pointer;
-  color: var(--ink);
+  color: var(--white);
 }
 
 .site-nav {
@@ -217,8 +211,8 @@ img {
   top: 100%;
   left: 0;
   right: 0;
-  background: var(--white);
-  border-bottom: 1px solid var(--border);
+  background: #0a0a09;
+  border-bottom: 1px solid var(--gold-dark);
   padding: 0.75rem 1rem 1rem;
   box-shadow: var(--shadow);
 }
@@ -236,17 +230,18 @@ img {
 .nav-link:hover {
   background: var(--bg);
   text-decoration: none;
-  color: var(--red);
+  color: var(--white);
 }
 .nav-link.active {
-  background: var(--red);
+  background: var(--gold);
   color: var(--white);
 }
 
 /* ---------- footer ---------- */
 .site-footer {
-  background: var(--ink);
-  color: #f3efe9;
+  background: #0a0a09;
+  border-top: 1px solid var(--gold-dark);
+  color: #ffffff;
   padding: 2rem 0;
   position: relative;
   z-index: 1;
@@ -256,7 +251,7 @@ img {
 }
 .footer-note {
   font-size: 0.9rem;
-  color: #cfc8bd;
+  color: #ffffff;
 }
 .footer-note a {
   color: var(--white);
@@ -273,7 +268,7 @@ img {
   font-weight: 600;
 }
 .footer-nav span {
-  color: #8a857c;
+  color: #ffffff;
   margin: 0 0.25rem;
 }
 
@@ -312,20 +307,20 @@ img {
   transform: none;
 }
 .btn-primary {
-  background: var(--red);
-  color: var(--white);
+  background: var(--gold);
+  color: #0d0d0c;
 }
 .btn-primary:hover {
-  background: var(--red-dark);
-  color: var(--white);
+  background: var(--gold-light);
+  color: #0d0d0c;
 }
 .btn-secondary {
-  background: var(--green);
-  color: var(--white);
+  background: var(--gold);
+  color: #0d0d0c;
 }
 .btn-secondary:hover {
-  background: var(--green-dark);
-  color: var(--white);
+  background: var(--gold-light);
+  color: #0d0d0c;
 }
 .btn-ghost {
   background: transparent;
@@ -333,13 +328,13 @@ img {
   color: var(--ink);
 }
 .btn-ghost:hover {
-  border-color: var(--red);
-  color: var(--red);
+  border-color: var(--white);
+  color: var(--white);
 }
 .btn-ghost.selected {
-  border-color: var(--green);
+  border-color: var(--white);
   background: #e9f5ee;
-  color: var(--green-dark);
+  color: var(--white);
 }
 
 .badge {
@@ -354,8 +349,8 @@ img {
   vertical-align: middle;
 }
 .badge-predicted {
-  background: var(--green);
-  color: var(--white);
+  background: var(--gold);
+  color: #0d0d0c;
 }
 
 /* ---------- forms ---------- */
@@ -383,7 +378,7 @@ select {
 }
 input:focus,
 select:focus {
-  border-color: var(--green);
+  border-color: var(--white);
   outline: none;
 }
 .search-row {
@@ -395,7 +390,7 @@ select:focus {
 }
 
 .form-error {
-  color: var(--red-dark);
+  color: var(--white);
   font-weight: 600;
   margin-top: 0.6rem;
 }
@@ -403,7 +398,7 @@ select:focus {
 .link-btn {
   background: none;
   border: none;
-  color: var(--red);
+  color: var(--white);
   font: inherit;
   font-size: 0.85rem;
   cursor: pointer;
@@ -417,16 +412,16 @@ select:focus {
 .hero {
   text-align: center;
   margin-bottom: 2rem;
-  border-top: 4px solid var(--red);
+  border-top: 4px solid var(--gold);
 }
 .hero-mark {
-  font-size: 3rem;
-  margin: 0 0 0.25rem;
+  margin: 0 0 0.75rem;
+  line-height: 0;
 }
 .hero h1 {
   font-size: 2.5rem;
   letter-spacing: 0.08em;
-  color: var(--red);
+  color: var(--white);
   margin: 0;
 }
 .hero-sub {
@@ -515,7 +510,7 @@ select:focus {
   font-size: 1.1rem;
 }
 .league-cta {
-  color: var(--red);
+  color: var(--white);
   font-weight: 700;
   font-size: 0.92rem;
 }
@@ -599,7 +594,7 @@ select:focus {
 
 /* ---------- prediction ---------- */
 .prediction-card {
-  border-top: 4px solid var(--green);
+  border-top: 4px solid var(--gold);
 }
 .outcome {
   margin-bottom: 1rem;
@@ -608,7 +603,7 @@ select:focus {
   border: 2px solid transparent;
 }
 .outcome.predicted {
-  border-color: var(--green);
+  border-color: var(--white);
   background: #f0f8f3;
 }
 .outcome-row {
@@ -632,12 +627,12 @@ select:focus {
 }
 .bar-fill {
   height: 100%;
-  background: var(--red);
+  background: var(--gold);
   border-radius: 999px;
   transition: width 600ms ease;
 }
 .outcome.predicted .bar-fill {
-  background: var(--green);
+  background: var(--gold);
 }
 .confidence {
   margin: 1.25rem 0;
@@ -655,7 +650,7 @@ select:focus {
 }
 .conf-fill {
   height: 100%;
-  background: linear-gradient(90deg, var(--green), #2ca05c);
+  background: linear-gradient(90deg, var(--gold), #2ca05c);
   border-radius: 999px;
   transition: width 600ms ease;
 }
@@ -728,7 +723,7 @@ select:focus {
   transition: width 600ms ease;
 }
 .dual-bar-home {
-  background: var(--red);
+  background: var(--gold);
   justify-content: flex-start;
   padding-left: 0.6rem;
 }
@@ -759,7 +754,7 @@ select:focus {
   color: var(--ink);
 }
 .chip-w {
-  background: var(--green);
+  background: var(--gold);
   color: var(--white);
 }
 .chip-d {
@@ -767,7 +762,7 @@ select:focus {
   color: var(--white);
 }
 .chip-l {
-  background: var(--red);
+  background: var(--gold);
   color: var(--white);
 }
 
@@ -963,7 +958,7 @@ select:focus {
   width: 44px;
   height: 44px;
   border: 4px solid var(--track);
-  border-top-color: var(--red);
+  border-top-color: var(--white);
   border-radius: 50%;
   animation: spin 0.9s linear infinite;
 }
@@ -985,11 +980,11 @@ select:focus {
 }
 
 .error-card {
-  border-left: 5px solid var(--red);
+  border-left: 5px solid var(--gold);
   text-align: center;
 }
 .error-card h2 {
-  color: var(--red-dark);
+  color: var(--white);
 }
 .hint {
   background: var(--bg);
