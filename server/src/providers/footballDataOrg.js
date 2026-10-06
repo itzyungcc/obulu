@@ -87,9 +87,20 @@ export async function getUpcomingFixtures({ league, date, team } = {}) {
     });
     matches = json.matches || [];
   } else {
-    // No league/team scope: pull scheduled matches from a handful of major
-    // competitions (free-tier friendly, best effort).
-    const compIds = [2021, 2014, 2019, 2002, 2015]; // EPL, La Liga, Serie A, Bundesliga, Ligue 1
+    // No league/team scope: pull scheduled matches from all free-tier
+    // (TIER_ONE) competitions. Best effort per competition.
+    const compIds = [
+      2021, // Premier League
+      2014, // La Liga
+      2019, // Serie A
+      2002, // Bundesliga
+      2015, // Ligue 1
+      2001, // UEFA Champions League
+      2016, // Championship
+      2003, // Eredivisie
+      2017, // Primeira Liga
+      2013, // Brazilian Serie A
+    ];
     for (const cid of compIds) {
       try {
         const json = await req(`/competitions/${cid}/matches`, {
