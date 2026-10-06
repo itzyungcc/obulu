@@ -1,0 +1,28 @@
+services:
+  api:
+    build: ./server
+    container_name: obulu-api
+    restart: unless-stopped
+    ports:
+      - "${PORT:-3001}:3001"
+    env_file:
+      - ./server/.env
+    environment:
+      PORT: 3001
+      DB_PATH: /data/obulu.db
+    volumes:
+      - obulu-data:/data
+
+  web:
+    build: ./web
+    container_name: obulu-web
+    restart: unless-stopped
+    ports:
+      - "8080:80"
+    depends_on:
+      - api
+    # If serving the API from the same host, set VITE_API_URL at web build
+    # time (see web/Dockerfile build arg) or front it with a reverse proxy.
+
+volumes:
+  obulu-data:

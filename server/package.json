@@ -1,0 +1,1 @@
+{"dependencies":{"express":"^4.21.2"},"description":"OBULU football comparison & prediction platform — backend API (informational only; no betting).","engines":{"node":">=22"},"main":"src/index.js","name":"obulu-server","scripts":{"start":"node src/index.js","test":"node test/model.test.js"},"type":"module","version":"1.0.0"}

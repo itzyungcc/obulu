@@ -1,0 +1,18 @@
+# Render Blueprint for the OBULU backend.
+# Deploy: Render Dashboard -> New -> Blueprint -> connect this repo.
+# Then set FOOTBALL_DATA_ORG_KEY in the dashboard (Environment tab).
+services:
+  - type: web
+    name: obulu-api
+    runtime: docker
+    dockerfilePath: ./server/Dockerfile
+    dockerContext: ./server
+    plan: free
+    healthCheckPath: /api/health
+    envVars:
+      - key: PORT
+        value: 3001
+      - key: FOOTBALL_DATA_ORG_KEY
+        sync: false # set manually in the Render dashboard (secret)
+      - key: SAMPLE_DATA
+        value: "false"
