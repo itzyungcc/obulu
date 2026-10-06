@@ -49,6 +49,12 @@ function alertsSentToday() {
 
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
 
+// SQLite cannot bind undefined, NaN, or objects. Sanitize numerics.
+function num(v, fallback = null) {
+  const n = Number(v);
+  return Number.isFinite(n) ? n : fallback;
+}
+
 export async function runAutomation({ manual = false, overrides = {} } = {}) {
   const config = { ...loadEffectiveConfig(db), ...overrides };
 
@@ -217,15 +223,15 @@ async function processOne({ id: runId, norm, config, counts, getAlertsToday, bum
         .run(
           automationMatchId,
           analysis.modelVersion,
-          p.homeWin,
-          p.draw,
-          p.awayWin,
+          num(p.homeWin, 0),
+          num(p.draw, 0),
+          num(p.awayWin, 0),
           p.predictedOutcome,
-          p.confidence,
-          p.dataCompleteness,
-          p.expectedHomeGoals,
-          p.expectedAwayGoals,
-          JSON.stringify(p.factors),
+          num(p.confidence, 0),
+          num(p.dataCompleteness, 0),
+          num(p.expectedHomeGoals),
+          num(p.expectedAwayGoals),
+          JSON.stringify(p.factors || []),
           p.blendedWithOdds ? 1 : 0,
           q.qualified ? 1 : 0,
           q.qualified ? "passed all configured criteria" : q.reasons.join("; "),

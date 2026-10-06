@@ -50,6 +50,16 @@ export async function analyzeFixture(fixture) {
     oddsWeight: 0, // automation uses the pure statistical model (MODEL_ODDS_WEIGHT=1 semantics: fully model-based)
   });
 
+  // Normalize model outputs to the automation's 0-100 scales:
+  // - probabilities are already 0-100 from toPercentages()
+  // - confidence is {score: 0-100, label} -> extract the numeric score
+  // - dataCompleteness is 0-1 -> scale to 0-100
+  const confidenceScore =
+    typeof result.confidence === "object" && result.confidence !== null
+      ? result.confidence.score
+      : result.confidence;
+  const completeness100 = Math.round((result.dataCompleteness || 0) * 100);
+
   return {
     match: {
       id: match.id,
@@ -62,9 +72,10 @@ export async function analyzeFixture(fixture) {
       homeWin: result.homeWin,
       draw: result.draw,
       awayWin: result.awayWin,
-      predictedOutcome: result.predictedOutcome,
-      confidence: result.confidence,
-      dataCompleteness: result.dataCompleteness,
+      predictedOutcome: String(result.predictedOutcome || "").toLowerCase(),
+      confidence: confidenceScore,
+      confidenceLabel: result.confidence?.label || null,
+      dataCompleteness: completeness100,
       expectedHomeGoals: result.expectedGoals?.home ?? null,
       expectedAwayGoals: result.expectedGoals?.away ?? null,
       factors: result.factors || [],
