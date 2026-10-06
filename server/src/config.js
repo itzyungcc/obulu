@@ -27,6 +27,10 @@ const config = {
     return Number.isFinite(n) && n > 0 ? n : 3;
   })(),
   liveMaxSnapshotGapMin: Math.max(1, parseInt(process.env.LIVE_MAX_SNAPSHOT_GAP_MIN || "10", 10) || 10),
+  // Consecutive polls a tracked fixture may be absent from the live list
+  // before it is finalized. Covers half-time (PAUSED is not IN_PLAY):
+  // 12 polls x 90s = 18 minutes of grace.
+  liveFinalizeMissedPolls: Math.max(2, parseInt(process.env.LIVE_FINALIZE_MISSED_POLLS || "12", 10) || 12),
 };
 
 export default config;

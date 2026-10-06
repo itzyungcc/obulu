@@ -28,6 +28,13 @@ const latest = new Map();
 let timer = null;
 let tickInFlight = false;
 
+// Observability for GET /api/live/status: when the last poll ran, whether it
+// errored, and how many live fixtures the provider reported. Updated on every
+// tick so a silent failure is visible instead of looking like "no matches".
+let lastPollAt = null;
+let lastPollError = null;
+let lastFixtureCount = null;
+
 function num(v, fallback = null) {
   const n = Number(v);
   return Number.isFinite(n) ? n : fallback;
@@ -226,6 +233,7 @@ async function processLiveFixture(provider, fx) {
   state.redCards = { home: reds.home || 0, away: reds.away || 0 };
   state.stats = detail.stats || null;
   state.lastSeen = new Date().toISOString();
+  state.missedPolls = 0; // seen again: reset the finalize grace counter
   try {
     db.prepare("UPDATE live_matches SET last_seen = ? WHERE fixture_id = ?").run(
       state.lastSeen,
@@ -318,11 +326,19 @@ export async function finalizeFixture(provider, fixtureId, state) {
 
 export async function pollOnce(providerOverride) {
   const provider = providerOverride || getProvider();
-  if (!provider) return;
+  if (!provider) {
+    lastPollError = "no provider configured";
+    return;
+  }
   let fixtures;
   try {
     fixtures = await provider.getLiveFixtures();
+    lastPollAt = new Date().toISOString();
+    lastPollError = null;
+    lastFixtureCount = Array.isArray(fixtures) ? fixtures.length : 0;
   } catch (e) {
+    lastPollAt = new Date().toISOString();
+    lastPollError = String(e.message || e).slice(0, 300);
     log(`getLiveFixtures failed, keeping last state: ${e.message}`);
     return;
   }
@@ -339,6 +355,11 @@ export async function pollOnce(providerOverride) {
   }
   for (const [id, state] of latest) {
     if (!seen.has(id)) {
+      // Grace period before finalizing: providers report half-time as
+      // PAUSED (not IN_PLAY), so a match briefly leaves the live list for
+      // ~15 minutes. Only finalize after N consecutive absences.
+      state.missedPolls = (state.missedPolls || 0) + 1;
+      if (state.missedPolls < config.liveFinalizeMissedPolls) continue;
       try {
         await finalizeFixture(provider, id, state);
       } catch (e) {
@@ -400,4 +421,19 @@ export function getLiveStates() {
     trackedSince: s.trackedSince,
     lastSeen: s.lastSeen,
   }));
+}
+
+// Engine health for GET /api/live/status. Answers even when the provider is
+// down so a dead poller is distinguishable from "no live matches".
+export function getEngineStatus() {
+  return {
+    enabled: config.liveEnabled === true,
+    running: timer !== null,
+    pollSeconds: config.livePollSeconds,
+    maxMatches: config.liveMaxMatches,
+    lastPollAt,
+    lastPollError,
+    lastFixtureCount,
+    trackedCount: latest.size,
+  };
 }

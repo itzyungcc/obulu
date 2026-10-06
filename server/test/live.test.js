@@ -276,7 +276,15 @@ await check("engine never throws on provider failure; keeps last state", async (
 await check("live-to-final transition: FINISHED + live verdict vs actual", async () => {
   fake.liveList = []; // fixture leaves the live list
   fake.final = { id: "live-1", status: "FT", score: { home: 2, away: 0 } };
+  // Half-time grace: a couple of missed polls must NOT finalize.
   await pollOnce(fake);
+  await pollOnce(fake);
+  assert.strictEqual(getLiveStates().length, 1, "grace period: still tracked after 2 missed polls");
+  const track1 = db.prepare("SELECT status FROM live_matches WHERE fixture_id='live-1'").get();
+  assert.strictEqual(track1.status, "TRACKING");
+  // After the full grace period the finished fixture is finalized.
+  const need = (await import("../src/config.js")).default.liveFinalizeMissedPolls;
+  for (let i = 0; i < need; i++) await pollOnce(fake);
   assert.strictEqual(getLiveStates().length, 0, "finished fixture must stop being tracked");
   const track = db.prepare("SELECT status FROM live_matches WHERE fixture_id='live-1'").get();
   assert.strictEqual(track.status, "FINISHED");
@@ -335,6 +343,7 @@ await check("routes: /api/live, /:id, /:id/history over HTTP", async () => {
   await new Promise((r) => httpServer.on("listening", r));
   base = `http://localhost:${httpServer.address().port}/api`;
 
+  try {
   // Nothing tracked right now (live-1 finalized, live-2 finalized).
   let res = await fetch(`${base}/live`);
   let body = await res.json();
@@ -375,8 +384,9 @@ await check("routes: /api/live, /:id, /:id/history over HTTP", async () => {
   assert.strictEqual(res.status, 404);
   body = await res.json();
   assert.strictEqual(body.error, "NOT_FOUND");
-
-  httpServer.close();
+  } finally {
+    httpServer.close();
+  }
 });
 
 console.log(`\nlive: ${passed} checks passed${process.exitCode ? " (with failures)" : ""}.`);

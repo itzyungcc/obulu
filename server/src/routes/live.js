@@ -5,7 +5,7 @@
 import { Router } from "express";
 import { db } from "../db/database.js";
 import { getProvider } from "../providers/index.js";
-import { getLiveStates } from "../live/engine.js";
+import { getLiveStates, getEngineStatus } from "../live/engine.js";
 
 const router = Router();
 
@@ -69,6 +69,18 @@ function mapState(s) {
     trackedSince: s.trackedSince,
   };
 }
+
+// ------------------------------------------------------ engine status ---
+// GET /api/live/status -> live engine health: is it polling, when did it
+// last poll, did the last poll error, how many live fixtures were seen.
+// No provider required: this diagnoses the engine itself, so a dead poller
+// is distinguishable from "no live matches right now".
+router.get(
+  "/live/status",
+  asyncHandler(async (_req, res) => {
+    res.json({ ok: true, engine: getEngineStatus() });
+  })
+);
 
 // ------------------------------------------------------------ all live ---
 // GET /api/live -> matches currently tracked by the engine (fast,
