@@ -5,6 +5,8 @@ import LogoMark from "./LogoMark.jsx";
 const LINKS = [
   { to: "/", label: "Home", end: true },
   { to: "/upcoming", label: "Upcoming Matches" },
+  { to: "/live", label: "Live" },
+  { to: "/calendar", label: "Calendar" },
   { to: "/search", label: "Search" },
   { to: "/leagues", label: "Leagues" },
   { to: "/about", label: "About OBULU" },

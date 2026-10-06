@@ -4,7 +4,11 @@ import config from "./config.js";
 import apiRouter from "./routes/api.js";
 import automationRouter from "./routes/automation.js";
 import jackpotRouter from "./routes/jackpot.js";
+import calendarRouter from "./routes/calendar.js";
+import liveRouter from "./routes/live.js";
 import { startScheduler, stopScheduler } from "./automation/scheduler.js";
+import { startResolver, stopResolver } from "./calendar/resolver.js";
+import { startLiveEngine, stopLiveEngine } from "./live/engine.js";
 import { closeDb } from "./db/database.js";
 
 const app = express();
@@ -26,6 +30,8 @@ app.get("/", (req, res) =>
 app.use("/api", apiRouter);
 app.use("/api", automationRouter);
 app.use("/api/jackpot", jackpotRouter);
+app.use("/api", calendarRouter);
+app.use("/api", liveRouter);
 
 // 404 for unknown API routes.
 app.use("/api", (req, res) =>
@@ -44,11 +50,15 @@ app.use((err, req, res, _next) => {
 const server = app.listen(config.port, () => {
   console.log(`obulu-api listening on port ${config.port}`);
   startScheduler();
+  startResolver();
+  startLiveEngine();
 });
 
 function shutdown(signal) {
   console.log(`received ${signal}; shutting down`);
   stopScheduler();
+  stopResolver();
+  stopLiveEngine();
   server.close(() => {
     try { closeDb(); } catch { /* ignore */ }
     process.exit(0);

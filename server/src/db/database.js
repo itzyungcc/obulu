@@ -38,6 +38,25 @@ try {
   console.error("[db] automation schema migration failed:", e.message);
 }
 
+// Prediction calendar + live engine tables: applied as a migration on
+// existing databases (same pattern as automation-schema.sql).
+try {
+  const hasCal = db
+    .prepare(
+      "SELECT name FROM sqlite_master WHERE type='table' AND name='prediction_snapshots'"
+    )
+    .get();
+  if (!hasCal) {
+    const calSchema = fs.readFileSync(
+      path.join(__dirname, "calendar-schema.sql"),
+      "utf8"
+    );
+    db.exec(calSchema);
+  }
+} catch (e) {
+  console.error("[db] calendar schema migration failed:", e.message);
+}
+
 export { db };
 
 export function closeDb() {

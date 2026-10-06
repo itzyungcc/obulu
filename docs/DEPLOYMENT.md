@@ -108,7 +108,27 @@ origin in production if you serve them on different domains.
 | `SAMPLE_DATA` | — | **must be `false`/unset in production** |
 | `DB_PATH` | no | default `./data/obulu.db`; use `/data/obulu.db` with a volume |
 | `MODEL_ODDS_WEIGHT` | no | default `0.75` (model vs odds blend) |
+| `LIVE_ENABLED` | no | default `true`; set `false` to disable the live prediction engine |
+| `LIVE_POLL_SECONDS` | no | default `90` (minimum `60`) — live provider poll interval |
+| `LIVE_MAX_MATCHES` | no | default `10` — max live fixtures tracked per poll |
+| `LIVE_DELTA_THRESHOLD` | no | default `3` — persist a live snapshot when any probability moves ≥ this many points |
+| `LIVE_MAX_SNAPSHOT_GAP_MIN` | no | default `10` — persist a live snapshot at least this often per tracked fixture |
 | `CORS_ORIGIN` | recommended | your web origin, e.g. `https://obulu.example.com` |
+
+## 4a. Database ephemerality on free hosting (important)
+
+**Render's free tier has no persistent disk: every redeploy or restart wipes
+the SQLite file.** That means `prediction_snapshots`, `live_predictions`,
+and the automation tables are **best-effort history, not a permanent
+record** — a redeploy resets accuracy tracking to zero. If durable history
+matters, attach a persistent disk (paid tier) mounted at `/data` and set
+`DB_PATH=/data/obulu.db`, or migrate to managed Postgres (schema is
+standard SQL — see `server/db/schema.sql`).
+
+Related free-tier note: the backend **sleeps when idle**. The first request
+after a quiet period (including the scheduler's own wake-ups and the live
+engine's first poll) can take ~a minute to respond; the scheduler and
+engines keep running once awake. This is normal on Render free — not a bug.
 
 ## 5. Post-deploy checks
 

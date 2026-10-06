@@ -225,9 +225,19 @@ function mapFixture(f) {
     away: teamRef(f.awayId),
     kickoff: isoDaysFromNow(f.days, f.hour, f.minute),
     status: "NS",
+    score: null,
     venue: f.venue,
     referee: "A. Sample",
   };
+}
+
+// Live engine interface (sample mode: no live data — dev only).
+export async function getLiveFixtures() {
+  return [];
+}
+
+export async function getLiveMatch(_fixtureId) {
+  return null;
 }
 
 const H2H = {

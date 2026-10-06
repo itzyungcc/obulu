@@ -1,7 +1,10 @@
 // football-data.org v4 fallback provider. API key via FOOTBALL_DATA_ORG_KEY env only.
 // Note: this API has no head-to-head or injuries endpoints, so those return
 // empty data; team stats are derived from recent finished matches.
+// Free tier offers no minute field on matches — the live minute is derived
+// from kickoff elapsed and marked minuteSource "estimated".
 import config, { todayStr } from "../config.js";
+import { estimateMinute } from "../model/livePredict.js";
 
 export const name = "football-data.org";
 export const sampleData = false;
@@ -42,7 +45,21 @@ function mapStatus(s) {
   const t = String(s || "").toUpperCase();
   if (["IN_PLAY", "PAUSED"].includes(t)) return "LIVE";
   if (["FINISHED", "AWARDED"].includes(t)) return "FT";
+  // Explicit non-playable states (surfaced so resolvers/automation can
+  // distinguish them from plain pre-match). The automation's matchFixture
+  // rejects anything that is not exactly "NS", so these never slip into
+  // the pre-match pipeline.
+  if (t === "CANCELED") return "CANCELLED";
+  if (t === "POSTPONED") return "POSTPONED";
+  if (t === "SUSPENDED") return "ABANDONED";
   return "NS";
+}
+
+// Full-time (or current) score when the provider reports one, else null.
+function scoreOf(m) {
+  const ft = m.score && m.score.fullTime;
+  if (!ft || ft.home == null || ft.away == null) return null;
+  return { home: ft.home, away: ft.away };
 }
 
 function mapFixture(m) {
@@ -58,9 +75,49 @@ function mapFixture(m) {
     away: { id: `fd-${m.awayTeam.id}`, name: m.awayTeam.name, logo: m.awayTeam.crest },
     kickoff: m.utcDate,
     status: mapStatus(m.status),
+    score: scoreOf(m),
     venue: m.venue || undefined,
     referee: (m.referees && m.referees[0] && m.referees[0].name) || undefined,
   };
+}
+
+// Free-tier (TIER_ONE) competition ids shared by upcoming + live discovery.
+const TIER_ONE_IDS = [
+  2021, // Premier League
+  2014, // La Liga
+  2019, // Serie A
+  2002, // Bundesliga
+  2015, // Ligue 1
+  2001, // UEFA Champions League
+  2016, // Championship
+  2003, // Eredivisie
+  2017, // Primeira Liga
+  2013, // Brazilian Serie A
+];
+
+function mapLiveFixture(m) {
+  const f = mapFixture(m);
+  const hasMinute = Number.isFinite(m.minute);
+  return {
+    ...f,
+    status: "LIVE",
+    score: scoreOf(m) || { home: 0, away: 0 },
+    minute: hasMinute ? m.minute : estimateMinute(m.utcDate),
+    minuteSource: hasMinute ? "provider" : "estimated",
+  };
+}
+
+function redCardsFromBookings(bookings, homeId) {
+  const out = { home: 0, away: 0 };
+  for (const b of bookings || []) {
+    const card = String(b.card || "").toUpperCase();
+    if (card !== "RED_CARD" && card !== "SECOND_YELLOW_CARD") continue;
+    const teamId = b.team && b.team.id != null ? `fd-${b.team.id}` : null;
+    // Only count attributable cards — never guess a side.
+    if (teamId === homeId) out.home++;
+    else if (teamId) out.away++;
+  }
+  return out;
 }
 
 export async function getLeagues() {
@@ -89,19 +146,7 @@ export async function getUpcomingFixtures({ league, date, team } = {}) {
   } else {
     // No league/team scope: pull scheduled matches from all free-tier
     // (TIER_ONE) competitions. Best effort per competition.
-    const compIds = [
-      2021, // Premier League
-      2014, // La Liga
-      2019, // Serie A
-      2002, // Bundesliga
-      2015, // Ligue 1
-      2001, // UEFA Champions League
-      2016, // Championship
-      2003, // Eredivisie
-      2017, // Primeira Liga
-      2013, // Brazilian Serie A
-    ];
-    for (const cid of compIds) {
+    for (const cid of TIER_ONE_IDS) {
       try {
         const json = await req(`/competitions/${cid}/matches`, {
           dateFrom: todayStr(0),
@@ -131,6 +176,36 @@ export async function getMatch(id) {
   try {
     const m = await req(`/matches/${idOf(id)}`);
     return mapFixture(m);
+  } catch {
+    return null;
+  }
+}
+
+// Live engine interface ---------------------------------------------------
+// One request for every live match across all free-tier competitions.
+export async function getLiveFixtures() {
+  const json = await req("/matches", {
+    status: "IN_PLAY",
+    competitions: TIER_ONE_IDS.join(","),
+  });
+  return (json.matches || [])
+    .map(mapLiveFixture)
+    .filter((f) => f.status === "LIVE")
+    .sort((a, b) => Date.parse(a.kickoff) - Date.parse(b.kickoff));
+}
+
+// Free tier: /matches embeds score + bookings inline. Red cards are derived
+// from the bookings list; detailed stats are NOT available -> stats is null,
+// never fabricated.
+export async function getLiveMatch(fixtureId) {
+  try {
+    const m = await req(`/matches/${idOf(fixtureId)}`);
+    const base = mapLiveFixture(m);
+    return {
+      ...base,
+      redCards: redCardsFromBookings(m.bookings, base.home.id),
+      stats: null,
+    };
   } catch {
     return null;
   }

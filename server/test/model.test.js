@@ -106,4 +106,23 @@ check("thin history shrinks toward average (no extreme ratings)", () => {
   assert.ok(r.homeWin < 95, `shrinkage failed, homeWin=${r.homeWin}`);
 });
 
+check("dataCompleteness uses actual recentForm length, not played counter (§24)", () => {
+  // Team claims 12 games played but only 2 recent results are on record:
+  // completeness must reflect the 2 real results, not the 12.
+  const thin = team({ n: 2, gfPer: 2, gaPer: 1 });
+  thin.played = 12; // stale/high season counter must NOT inflate completeness
+  const full = team({ n: 10, gfPer: 2, gaPer: 1 });
+  const rThin = predictMatch(thin, full, LEAGUE, null, null);
+  const rFull = predictMatch(full, full, LEAGUE, null, null);
+  assert.ok(
+    rThin.dataCompleteness < rFull.dataCompleteness,
+    `thin history should score lower: ${rThin.dataCompleteness} vs ${rFull.dataCompleteness}`
+  );
+  // 0.35*0.2 + 0.35*1.0 + 0.15*1 (credible league avgs) + 0.15*0 (no h2h)
+  assert.ok(
+    Math.abs(rThin.dataCompleteness - 0.57) < 1e-9,
+    `expected 0.57, got ${rThin.dataCompleteness}`
+  );
+});
+
 console.log(`\n${passed} tests passed${process.exitCode ? " (with failures)" : ""}.`);

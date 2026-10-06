@@ -17,7 +17,14 @@ Base path: `/api`. All responses are JSON. Error shape:
 | GET | `/api/teams/search?q=` | `{ teams: [...] }` |
 | GET | `/api/matches/:id` | `{ match, sampleData }` — 404 `NOT_FOUND` |
 | GET | `/api/matches/:id/analysis` | form, home/away splits, goals, clean sheets, h2h, standings, injuries |
-| GET | `/api/matches/:id/prediction` | `prediction: { homeWin, draw, awayWin, predictedOutcome, confidence: {score,label}, factors[], disclaimer }`, `model: { method, blendedWithOdds, dataCompleteness }` |
+| GET | `/api/matches/:id/prediction` | `prediction: { homeWin, draw, awayWin, predictedOutcome, confidence: {score,label}, factors[], disclaimer }`, `model: { method, blendedWithOdds, dataCompleteness }` — also records an immutable calendar snapshot |
+| GET | `/api/predictions/calendar?month=YYYY-MM` | month view: `{ month, days: { "2026-10-06": { total, correct, incorrect, pending } } }` |
+| GET | `/api/predictions/history?date=&status=&outcome=&league=&from=&to=&page=&limit=` | `{ items, page, limit, total }`, newest kickoff first; limit default 20, max 100 |
+| GET | `/api/predictions/:id` | single snapshot — 404 `NOT_FOUND` |
+| GET | `/api/predictions/stats?from=&to=&league=&outcome=` | `{ total, correct, incorrect, pending, void, accuracy, accuracyNote, byOutcome }`; `accuracy` is `null` until 10+ resolved |
+| GET | `/api/live` | `{ matches: [...], count }` — live probabilities + pre-match baseline, side by side |
+| GET | `/api/live/:fixtureId` | full live state — 404 `NOT_FOUND` when not tracked |
+| GET | `/api/live/:fixtureId/history` | in-play snapshots, chronological, cap 100 |
 
 Behaviour without provider keys (and `SAMPLE_DATA` not `true`): every
 data endpoint returns **503** `{ error: "DATA_PROVIDER_NOT_CONFIGURED",

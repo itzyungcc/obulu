@@ -195,6 +195,57 @@ async function matchPrediction(id) {
 }
 
 // ---------------------------------------------------------------------------
+// Prediction calendar + live tracking (online-only features).
+// The offline build serves historical 2024/25 data; it has no prediction
+// recording, track record, or live feed, so these endpoints return empty
+// shapes or a 503-style ApiError, matching the offline "online only" UI.
+// ---------------------------------------------------------------------------
+
+async function predictionsCalendar() {
+  return { days: {} };
+}
+
+async function predictionsHistory(params) {
+  return {
+    items: [],
+    page: 1,
+    limit: Number(params.limit) > 0 ? Number(params.limit) : 20,
+    total: 0,
+  };
+}
+
+async function predictionsStats() {
+  return {
+    total: 0,
+    correct: 0,
+    incorrect: 0,
+    pending: 0,
+    void: 0,
+    accuracy: null,
+    note: "No resolved predictions yet.",
+    byOutcome: {
+      HOME: { total: 0, correct: 0 },
+      DRAW: { total: 0, correct: 0 },
+      AWAY: { total: 0, correct: 0 },
+    },
+  };
+}
+
+async function liveNow() {
+  return [];
+}
+
+function offlineOnly(feature) {
+  return Promise.reject(
+    new ApiError(
+      503,
+      "OFFLINE_NOT_SUPPORTED",
+      `${feature} is available in the online version of OBULU only.`
+    )
+  );
+}
+
+// ---------------------------------------------------------------------------
 // Router: same paths as web/src/api.js
 // ---------------------------------------------------------------------------
 
@@ -205,6 +256,16 @@ export async function localApiFetch(path, params = {}) {
   if (path === "/fixtures/upcoming") return upcomingFixtures(params);
   if (path === "/fixtures/all") return allFixtures(params);
   if (path === "/teams/search") return searchTeams(params);
+  if (path === "/predictions/calendar") return predictionsCalendar();
+  if (path === "/predictions/history") return predictionsHistory(params);
+  if (path === "/predictions/stats") return predictionsStats();
+  if (path === "/live") return liveNow();
+  const liveHist = path.match(/^\/live\/([^/]+)\/history$/);
+  if (liveHist) return offlineOnly("Live match history");
+  const liveMatch = path.match(/^\/live\/([^/]+)$/);
+  if (liveMatch) return offlineOnly("Live tracking");
+  const predictionSnap = path.match(/^\/predictions\/([^/]+)$/);
+  if (predictionSnap) return offlineOnly("Prediction details");
   if (matchId && !matchId[2]) return matchDetail(decodeURIComponent(matchId[1]));
   if (matchId && matchId[3] === "analysis")
     return matchAnalysis(decodeURIComponent(matchId[1]));

@@ -1,6 +1,7 @@
 // OBULU Automation Agent tests — plain node asserts, run with `npm test`.
-// Covers: normalization, fixture matching rules, qualification thresholds,
-// duplicate prevention, dry-run behavior, scheduler locking, notifier format.
+// Covers: team-name normalization, qualification thresholds, notifier
+// message format (incl. the confidence/probability wording rule), and
+// automation config defaults.
 import assert from "node:assert";
 import {
   normalizeTeamName,
@@ -12,15 +13,19 @@ import { formatAlertMessage } from "../src/automation/notifier.js";
 import { loadAutomationConfig } from "../src/automation/automationConfig.js";
 
 let passed = 0;
+const pendingChecks = [];
 function check(name, fn) {
-  try {
-    fn();
-    passed++;
-    console.log(`ok - ${name}`);
-  } catch (e) {
-    console.error(`FAIL - ${name}: ${e.message}`);
-    process.exitCode = 1;
-  }
+  const run = async () => {
+    try {
+      await fn();
+      passed++;
+      console.log(`ok - ${name}`);
+    } catch (e) {
+      console.error(`FAIL - ${name}: ${e.message}`);
+      process.exitCode = 1;
+    }
+  };
+  pendingChecks.push(run());
 }
 
 // ------------------------------------------------- normalization ---
@@ -241,4 +246,25 @@ check("automation config loads spec defaults", () => {
   assert.strictEqual(c.enabled, false); // safe default
 });
 
-console.log(`\nautomation: ${passed} checks passed`);
+// ------------------------------------------------- matcher status gate ---
+// The matcher must reject every non-NS status — including the explicit
+// CANCELLED/POSTPONED/ABANDONED states surfaced by the providers — so voided
+// fixtures can never enter the pre-match pipeline.
+import { matchFixture } from "../src/automation/fixtureMatcher.js";
+
+check("matchFixture rejects non-NS statuses (incl. CANCELLED/POSTPONED/ABANDONED)", async () => {
+  const norm = (status) => ({
+    homeTeam: "Arsenal",
+    awayTeam: "Chelsea",
+    fixture: { id: "m1", status, home: { name: "Arsenal" }, away: { name: "Chelsea" } },
+  });
+  for (const s of ["CANCELLED", "POSTPONED", "ABANDONED", "FT", "LIVE"]) {
+    const r = await matchFixture(norm(s));
+    assert.strictEqual(r.outcome, "unmatched", `status ${s} must not match`);
+  }
+  const ok = await matchFixture(norm("NS"));
+  assert.strictEqual(ok.outcome, "matched");
+});
+
+await Promise.all(pendingChecks);
+console.log(`\nautomation: ${passed} checks passed${process.exitCode ? " (with failures)" : ""}.`);

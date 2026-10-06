@@ -9,6 +9,7 @@ export const CACHE_TTLS = {
   h2h: 24 * 3600, // 24 h
   odds: 30 * 60, // 30 min
   leagues: 24 * 3600, // 24 h
+  live: 120, // 2 min — in-play data goes stale fast; key prefix "live:"
 };
 
 export function cacheGet(key) {

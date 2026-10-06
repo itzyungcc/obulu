@@ -61,6 +61,22 @@ build, talking to the same backend. There is no separate native codebase.
 - **Routes (`src/routes/api.js`):** the `/api/*` endpoints documented in
   `server/API.md`. Every prediction is persisted to the `predictions`
   table for audit/retraining.
+- **Prediction calendar (`src/calendar/`):** every prediction (from
+  `GET /api/matches/:id/prediction` and the automation's `analyzeFixture`)
+  records an immutable snapshot in `prediction_snapshots` — first snapshot
+  wins, never overwritten. A 10-minute in-process resolver marks finished
+  fixtures `CORRECT`/`INCORRECT` or `VOID` (cancelled/postponed/abandoned).
+  Read API: `GET /api/predictions/calendar|history|:id|stats`
+  (`server/API.md`).
+- **Live engine (`src/live/engine.js`):** in-process poller (default 90s,
+  unref'd) tracking in-play fixtures; recomputes 1X2 from the pre-match
+  baseline + remaining expected goals (time-decayed, red-card adjusted,
+  optional shot-momentum), persists `live_predictions` only on material
+  change, and records the final live verdict (`live_correct`) on
+  `prediction_snapshots` when a match finishes. Read API:
+  `GET /api/live`, `/api/live/:fixtureId`, `/api/live/:fixtureId/history`.
+  Providers expose `getLiveFixtures`/`getLiveMatch`; stats missing from a
+  tier stay `null`, never fabricated.
 
 ## Frontend (`web/`)
 

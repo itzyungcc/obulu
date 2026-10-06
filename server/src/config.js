@@ -18,6 +18,15 @@ const config = {
   sampleData: bool(process.env.SAMPLE_DATA, false),
   dbPath: process.env.DB_PATH || "./data/obulu.db",
   modelOddsWeight: floatInRange(process.env.MODEL_ODDS_WEIGHT, 0.75, 0, 1),
+  // Live prediction engine.
+  liveEnabled: bool(process.env.LIVE_ENABLED, true),
+  livePollSeconds: Math.max(60, parseInt(process.env.LIVE_POLL_SECONDS || "90", 10) || 90),
+  liveMaxMatches: Math.max(1, parseInt(process.env.LIVE_MAX_MATCHES || "10", 10) || 10),
+  liveDeltaThreshold: (() => {
+    const n = parseFloat(process.env.LIVE_DELTA_THRESHOLD);
+    return Number.isFinite(n) && n > 0 ? n : 3;
+  })(),
+  liveMaxSnapshotGapMin: Math.max(1, parseInt(process.env.LIVE_MAX_SNAPSHOT_GAP_MIN || "10", 10) || 10),
 };
 
 export default config;

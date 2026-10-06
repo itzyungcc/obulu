@@ -1,7 +1,8 @@
 import { useEffect, useState } from "react";
 import { useParams } from "react-router-dom";
-import { getMatch, getAnalysis, getPrediction } from "../api.js";
-import PredictionCard from "../components/PredictionCard.jsx";
+import { getMatch, getAnalysis, getPrediction, getLiveMatch, getLiveHistory, OFFLINE_MODE } from "../api.js";
+import PredictionCard, { toPct } from "../components/PredictionCard.jsx";
+import LiveProbBars from "../components/LiveProbBars.jsx";
 import FormChips from "../components/FormChips.jsx";
 import StatBar from "../components/StatBar.jsx";
 import Donut from "../components/Donut.jsx";
@@ -33,11 +34,125 @@ function KeyValue({ k, v }) {
   );
 }
 
+function LiveBadge() {
+  return (
+    <span className="live-badge" role="status" aria-label="Live now">
+      <span className="live-dot" aria-hidden="true" />
+      LIVE
+    </span>
+  );
+}
+
+function FullTimeBadge() {
+  return (
+    <span className="ft-badge" role="status" aria-label="Full time">
+      FULL-TIME
+    </span>
+  );
+}
+
+function LivePanel({ live, history, match }) {
+  const fixture = live?.fixture || {};
+  const home = fixture.home || match?.home || {};
+  const away = fixture.away || match?.away || {};
+  const score = live?.score || {};
+  const estimated = live?.minuteSource === "estimated";
+  const finished = match?.status === "FT" || match?.status === "FINISHED";
+  const liveProbs = live?.live || {};
+  const factors = Array.isArray(liveProbs.factors) ? liveProbs.factors : [];
+  const timeline = Array.isArray(history) ? history : [];
+
+  return (
+    <section className="card live-panel" aria-labelledby="live-heading">
+      <div className="live-card-head">
+        {finished ? <FullTimeBadge /> : <LiveBadge />}
+        <h2 id="live-heading">Live tracking</h2>
+      </div>
+      <div className="live-score-row">
+        <span className="team-badge team-badge-lg">
+          {home.logo ? (
+            <img src={home.logo} alt={`${home.name} logo`} width="44" height="44" />
+          ) : null}
+          <span className="team-name">{home.name}</span>
+        </span>
+        <span
+          className="live-score live-score-lg"
+          aria-label={`Score ${score.home ?? 0} to ${score.away ?? 0}`}
+        >
+          {score.home ?? "–"} – {score.away ?? "–"}
+        </span>
+        <span className="team-badge team-badge-lg">
+          {away.logo ? (
+            <img src={away.logo} alt={`${away.name} logo`} width="44" height="44" />
+          ) : null}
+          <span className="team-name">{away.name}</span>
+        </span>
+      </div>
+      {!finished && live?.minute != null && (
+        <p className="live-minute">
+          <strong>{live.minute}'</strong>
+          {estimated && <span className="est-tag"> (est.)</span>}
+        </p>
+      )}
+      {finished && (
+        <p className="muted">
+          Final result:{" "}
+          <strong>
+            {home.name} {score.home ?? "–"} – {score.away ?? "–"} {away.name}
+          </strong>
+        </p>
+      )}
+      <LiveProbBars
+        live={liveProbs}
+        preMatch={live?.preMatch}
+        homeName={home.name}
+        awayName={away.name}
+      />
+      {factors.length > 0 && (
+        <div className="factors-block">
+          <h3>Why? (live factors)</h3>
+          <ul className="factors">
+            {factors.map((f, i) => (
+              <li key={i}>{typeof f === "string" ? f : f.text || JSON.stringify(f)}</li>
+            ))}
+          </ul>
+        </div>
+      )}
+      {timeline.length > 0 && (
+        <div className="timeline-block">
+          <h3>Match timeline</h3>
+          <ol className="timeline">
+            {timeline.map((t, i) => (
+              <li key={i}>
+                <span className="tl-minute">
+                  <strong>{t.minute ?? "–"}'</strong>
+                </span>
+                <span className="tl-score">
+                  {t.score_home ?? "–"} – {t.score_away ?? "–"}
+                </span>
+                <span className="tl-pick">
+                  predicted {t.predicted_outcome || "—"}
+                </span>
+                <span className="tl-probs muted">
+                  {Math.round(toPct(t.home_win))}% / {Math.round(toPct(t.draw))}% /{" "}
+                  {Math.round(toPct(t.away_win))}%
+                </span>
+              </li>
+            ))}
+          </ol>
+        </div>
+      )}
+    </section>
+  );
+}
+
 export default function MatchAnalysis() {
   const { id } = useParams();
   const [match, setMatch] = useState(null);
   const [analysis, setAnalysis] = useState(null);
   const [prediction, setPrediction] = useState(null);
+  const [live, setLive] = useState(null);
+  const [liveHistory, setLiveHistory] = useState([]);
   const [sampleData, setSampleData] = useState(false);
   const [state, setState] = useState("loading");
   const [error, setError] = useState(null);
@@ -45,6 +160,8 @@ export default function MatchAnalysis() {
   const load = async () => {
     setState("loading");
     setError(null);
+    setLive(null);
+    setLiveHistory([]);
     try {
       const [m, a, p] = await Promise.all([
         getMatch(id),
@@ -55,6 +172,22 @@ export default function MatchAnalysis() {
       setAnalysis(a || null);
       setPrediction(p?.prediction || null);
       setSampleData(Boolean(m.sampleData || a.sampleData || p.sampleData));
+      // Live tracking is online-only; a 404 means "not tracked live".
+      if (!OFFLINE_MODE) {
+        try {
+          const l = await getLiveMatch(id);
+          if (l && l.fixture) {
+            setLive(l);
+            try {
+              setLiveHistory((await getLiveHistory(id)) || []);
+            } catch {
+              setLiveHistory([]);
+            }
+          }
+        } catch {
+          /* not tracked live — panel stays hidden */
+        }
+      }
       setState("ready");
     } catch (e) {
       setError(e);
@@ -87,6 +220,9 @@ export default function MatchAnalysis() {
   const away = match?.away || {};
   const league = match?.league || {};
   const kickoff = formatKickoff(match?.kickoff);
+  const kickoffDate =
+    typeof match?.kickoff === "string" ? match.kickoff.slice(0, 10) : "";
+  const isLive = match?.status === "LIVE" || Boolean(live);
   const rf = analysis?.recentForm || {};
   const ha = analysis?.homeAway || {};
   const h2h = analysis?.headToHead || {};
@@ -123,7 +259,14 @@ export default function MatchAnalysis() {
         </p>
       </header>
 
-      <PredictionCard prediction={prediction} homeName={home.name} awayName={away.name} />
+      <PredictionCard
+        prediction={prediction}
+        homeName={home.name}
+        awayName={away.name}
+        calendarDate={/^\d{4}-\d{2}-\d{2}$/.test(kickoffDate) ? kickoffDate : undefined}
+      />
+
+      {isLive && <LivePanel live={live} history={liveHistory} match={match} />}
 
       <div className="two-col">
         {/* Recent form */}

@@ -210,8 +210,11 @@ function toPercentages(pHome, pDraw, pAway) {
 }
 
 function dataCompleteness(home, away, leagueAvgs, h2h) {
-  const hn = Math.min(home.played || (home.recentForm || []).length || 0, 10) / 10;
-  const an = Math.min(away.played || (away.recentForm || []).length || 0, 10) / 10;
+  // §24: use the ACTUAL number of recent-form matches available, not the
+  // season `played` counter (a team can have played 12 games while only 2
+  // recent results are on record). Same 0-1 scaling otherwise.
+  const hn = Math.min((home.recentForm || []).length, 10) / 10;
+  const an = Math.min((away.recentForm || []).length, 10) / 10;
   return 0.35 * hn + 0.35 * an + 0.15 * (leagueAvgs.credible ? 1 : 0) + 0.15 * (h2h.played > 0 ? 1 : 0);
 }
 

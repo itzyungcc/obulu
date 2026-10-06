@@ -1,3 +1,5 @@
+import { Link } from "react-router-dom";
+
 const DISCLAIMER =
   "Predictions are statistical estimates based on available data and are not guarantees of match results.";
 
@@ -11,7 +13,12 @@ function clamp(v) {
   return Math.min(100, Math.max(0, v));
 }
 
-export default function PredictionCard({ prediction, homeName, awayName }) {
+export default function PredictionCard({
+  prediction,
+  homeName,
+  awayName,
+  calendarDate,
+}) {
   if (!prediction) return null;
 
   const outcomes = [
@@ -81,8 +88,15 @@ export default function PredictionCard({ prediction, homeName, awayName }) {
       )}
 
       <p className="disclaimer">{DISCLAIMER}</p>
+
+      {calendarDate && (
+        <p className="calendar-note">
+          Recorded in the{" "}
+          <Link to={`/calendar?date=${calendarDate}`}>Prediction Calendar</Link>
+        </p>
+      )}
     </section>
   );
 }
 
-export { DISCLAIMER };
+export { DISCLAIMER, toPct, clamp };

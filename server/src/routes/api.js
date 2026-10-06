@@ -7,6 +7,7 @@ import { getProvider, providerKind, oddsEnabled } from "../providers/index.js";
 import * as oddsApi from "../providers/oddsApi.js";
 import { cacheGet, cacheSet } from "../cache.js";
 import { predictMatch, DISCLAIMER, MODEL_VERSION, METHOD } from "../model/poisson.js";
+import { recordPredictionSnapshot } from "../calendar/snapshots.js";
 
 const router = Router();
 
@@ -294,6 +295,25 @@ router.get(
       isSample() ? 1 : 0,
       new Date().toISOString()
     );
+
+    // Immutable calendar snapshot (first prediction wins). Never breaks
+    // the endpoint: recordPredictionSnapshot never throws, but stay safe.
+    try {
+      recordPredictionSnapshot(
+        { id: match.id, home: match.home, away: match.away, league: match.league, kickoff: match.kickoff },
+        {
+          homeWin: result.homeWin,
+          draw: result.draw,
+          awayWin: result.awayWin,
+          predictedOutcome: result.predictedOutcome,
+          confidence: result.confidence,
+          dataCompleteness: result.dataCompleteness,
+          expectedGoals: result.expectedGoals,
+          factors: result.factors,
+          blendedWithOdds: result.blendedWithOdds,
+        }
+      );
+    } catch { /* snapshot failure must never break predictions */ }
 
     res.json({
       match: {

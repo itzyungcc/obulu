@@ -75,3 +75,25 @@ export const searchTeams = (q) => apiFetch("/teams/search", { q });
 export const getMatch = (id) => apiFetch(`/matches/${encodeURIComponent(id)}`);
 export const getAnalysis = (id) => apiFetch(`/matches/${encodeURIComponent(id)}/analysis`);
 export const getPrediction = (id) => apiFetch(`/matches/${encodeURIComponent(id)}/prediction`);
+
+/** Is the offline (on-device) Android build active? */
+export const OFFLINE_MODE = OFFLINE;
+
+// --- Prediction calendar / track record (GET /api/predictions/*) ---------------
+export const getCalendar = (month) =>
+  apiFetch("/predictions/calendar", { month });
+export const getPredictionHistory = (params = {}) =>
+  apiFetch("/predictions/history", params);
+// NOTE: named getPredictionSnapshot because getPrediction() already maps to
+// GET /matches/:id/prediction. This one maps to GET /api/predictions/:id.
+export const getPredictionSnapshot = (id) =>
+  apiFetch(`/predictions/${encodeURIComponent(id)}`);
+export const getPredictionStats = (params = {}) =>
+  apiFetch("/predictions/stats", params);
+
+// --- Live tracking ------------------------------------------------------------
+export const getLive = () => apiFetch("/live");
+export const getLiveMatch = (fixtureId) =>
+  apiFetch(`/live/${encodeURIComponent(fixtureId)}`);
+export const getLiveHistory = (fixtureId) =>
+  apiFetch(`/live/${encodeURIComponent(fixtureId)}/history`);

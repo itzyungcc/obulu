@@ -10,6 +10,7 @@ import { matchFixture } from "./fixtureMatcher.js";
 import { analyzeFixture } from "./analyze.js";
 import { qualify } from "./qualification.js";
 import { notify } from "./notifier.js";
+import { recordPredictionSnapshot } from "../calendar/snapshots.js";
 
 const log = (...a) => console.log("[Automation]", ...a);
 
@@ -194,6 +195,14 @@ async function processOne({ id: runId, norm, config, counts, getAlertsToday, bum
       throw e;
     }
     counts.analyzed++;
+
+    // Immutable calendar snapshot of the authoritative prediction (first
+    // snapshot wins). Never throws; a snapshot failure must not break the run.
+    try {
+      recordPredictionSnapshot(analysis.match, analysis.prediction);
+    } catch (e) {
+      log(`run ${id}: snapshot failed (non-fatal): ${e.message}`);
+    }
 
     // ---- Qualify ----
     const q = qualify({

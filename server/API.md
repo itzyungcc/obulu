@@ -116,7 +116,101 @@ Statistical match prediction. Percentages always sum to exactly 100.0.
 ```
 `confidence.label` is one of `Low | Moderate | High | Very high`.
 `predictedOutcome` is one of `HOME | DRAW | AWAY`. Each prediction is persisted
-to the `predictions` table for audit and future calibration.
+to the `predictions` table for audit and future calibration. It also records
+an immutable snapshot in `prediction_snapshots` (first prediction per fixture
+wins — later calls never overwrite it).
+
+### GET /api/predictions/calendar?month=2026-10
+Month view of prediction results, keyed by calendar day in Africa/Lagos.
+`month` defaults to the current month (Africa/Lagos). `month` must be
+`YYYY-MM`.
+```json
+{ "month": "2026-10",
+  "days": { "2026-10-06": { "total": 4, "correct": 2, "incorrect": 1, "pending": 1 } } }
+```
+
+### GET /api/predictions/history?date=&status=&outcome=&league=&from=&to=&page=&limit=
+Prediction history, newest kickoff first. Filters: `date` (YYYY-MM-DD,
+Africa/Lagos day), `status` (`PENDING|CORRECT|INCORRECT|VOID`),
+`outcome` (`HOME|DRAW|AWAY`), `league` (substring), `from`/`to`
+(YYYY-MM-DD range). `limit` default 20, max 100.
+```json
+{ "items": [ { "id": 1, "fixtureId": "...", "homeTeam": "...", "awayTeam": "...",
+    "league": "...", "country": "...", "kickoff": "...", "kickoffDate": "2026-10-06",
+    "predictedAt": "...",
+    "prediction": { "homeWin": 52.4, "draw": 26.1, "awayWin": 21.5,
+      "predictedOutcome": "HOME", "confidence": { "score": 48, "label": "Moderate" },
+      "dataCompleteness": 0.85, "expectedGoals": { "home": 1.75, "away": 0.92 },
+      "factors": ["..."], "blendedWithOdds": false },
+    "modelVersion": "1.0.0", "status": "CORRECT",
+    "actual": { "homeScore": 2, "awayScore": 0, "outcome": "HOME" },
+    "resolvedAt": "...",
+    "liveFinal": { "homeWin": 61.0, "draw": 22.0, "awayWin": 17.0,
+      "predictedOutcome": "HOME", "correct": true } } ],
+  "page": 1, "limit": 20, "total": 137 }
+```
+`actual` is `null` until the match is resolved; `liveFinal` is `null` unless
+the live engine tracked the fixture (`correct` is `null` when the match was
+voided or the result was unknown).
+
+### GET /api/predictions/:id
+Single snapshot (same shape as a history item). 404 `NOT_FOUND` when missing.
+
+### GET /api/predictions/stats?from=&to=&league=&outcome=
+Accuracy tracking. Same filters as history (minus `date`/`status`/`page`).
+```json
+{ "total": 137, "correct": 71, "incorrect": 48, "pending": 12, "void": 6,
+  "accuracy": 59.7, "accuracyNote": null,
+  "byOutcome": { "HOME": { "total": 80, "correct": 52 },
+                 "DRAW": { "total": 20, "correct": 6 },
+                 "AWAY": { "total": 37, "correct": 13 } } }
+```
+`accuracy` is a 0–100 percentage and is `null` with an explanatory
+`accuracyNote` until 10+ predictions have been resolved (small-sample guard).
+
+### GET /api/live
+Matches currently in play, with live probabilities. Fast in-memory read;
+`{ "matches": [], "count": 0 }` when nothing is live.
+```json
+{ "matches": [ {
+    "fixture": { "id": "...", "league": {...}, "home": {...}, "away": {...},
+                 "kickoff": "...", "status": "LIVE" },
+    "score": { "home": 1, "away": 0 },
+    "minute": 63, "minuteSource": "provider|estimated",
+    "redCards": { "home": 0, "away": 0 },
+    "live": { "homeWin": 68.4, "draw": 20.1, "awayWin": 11.5,
+      "predictedOutcome": "HOME",
+      "confidence": { "score": 67, "label": "High" },
+      "factors": ["Arsenal currently leading 1-0", "More shots on target (5 vs 2)",
+        "Arsenal carried the stronger pre-match rating"],
+      "expectedGoalsRemaining": { "home": 0.54, "away": 0.27 } },
+    "preMatch": { "homeWin": 55.0, "draw": 25.0, "awayWin": 20.0,
+      "predictedOutcome": "HOME", "confidence": { "score": 42, "label": "Moderate" } },
+    "baselineSource": "snapshot|fresh",
+    "trackedSince": "..." } ],
+  "count": 1 }
+```
+`minuteSource` is `estimated` (derived from kickoff elapsed) when the
+provider does not report the match minute. Live `confidence` is a separate
+in-play measure (favourite-vs-second margin), not the pre-match one.
+
+### GET /api/live/:fixtureId
+Full live state for one tracked fixture (same shape as a `/api/live` item,
+plus `stats` and `lastSeen`). 404 `NOT_FOUND` when the fixture is not
+currently tracked as live.
+
+### GET /api/live/:fixtureId/history
+In-play probability snapshots for one fixture, chronological (newest last),
+capped at 100. Snapshots are written only when the picture changes (first
+sighting, |Δp| ≥ 3, goal/red-card change, or 10 min elapsed).
+```json
+{ "fixtureId": "...",
+  "snapshots": [ { "minute": 30, "minuteSource": "estimated",
+    "score": { "home": 0, "away": 0 }, "redCards": { "home": 0, "away": 0 },
+    "homeWin": 55.2, "draw": 25.1, "awayWin": 19.7, "predictedOutcome": "HOME",
+    "confidence": { "score": 42, "label": "Moderate" }, "factors": ["..."],
+    "createdAt": "..." } ] }
+```
 
 ## Error codes
 
@@ -136,7 +230,8 @@ development."
 ## Caching
 
 SQLite-backed (`cache_meta` table). TTLs: fixtures 15min, team stats 6h,
-standings 6h, head-to-head 24h, odds 30min, leagues 24h.
+standings 6h, head-to-head 24h, odds 30min, leagues 24h, live data 2min
+(key prefix `live:`).
 
 ## Sample mode
 
