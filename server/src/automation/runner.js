@@ -9,7 +9,7 @@ import { collectUpcoming } from "./collector.js";
 import { matchFixture } from "./fixtureMatcher.js";
 import { analyzeFixture } from "./analyze.js";
 import { qualify } from "./qualification.js";
-import { notify } from "./notifier.js";
+import { notify, notifySlip } from "./notifier.js";
 import { recordPredictionSnapshot } from "../calendar/snapshots.js";
 import { getCachedEvents } from "../sportybet/client.js";
 import { createBooking } from "../sportybet/booking.js";
@@ -56,10 +56,11 @@ const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
 // SportyBet outcome ids for the 1X2 market (mirror the events fetcher).
 const OUTCOME_ID = { home: "1", draw: "2", away: "3" };
 
-// Attempt a SportyBet share-booking (slip reservation only — never a placed
-// bet) for a qualified fixture. Never throws and never breaks the run: any
-// failure is logged and the alert still goes out without a code.
-export async function maybeCreateBooking({ config, analysis, prediction, fixtureId }) {
+// Match a qualified fixture to a SportyBet event and build its 1X2 slip
+// selection. Selections are collected across the run and combined into ONE
+// booking code at the end of the run (createCombinedSlip). Never throws:
+// any failure returns null and the fixture is simply left out of the slip.
+export async function matchSportybetSelection({ config, analysis, prediction, fixtureId }) {
   if (!config.sportyBetBookingEnabled) return null;
   try {
     const home = analysis.match?.home?.name;
@@ -86,27 +87,28 @@ export async function maybeCreateBooking({ config, analysis, prediction, fixture
     }
 
     if (!event.odds) {
-      log(`booking skipped: no 1X2 odds for ${home} vs ${away}`);
+      log(`slip selection skipped: no 1X2 odds for ${home} vs ${away}`);
       return null;
     }
     if (Date.parse(event.kickoffISO) <= Date.now()) {
-      log(`booking skipped: kickoff already passed for ${home} vs ${away}`);
+      log(`slip selection skipped: kickoff already passed for ${home} vs ${away}`);
       return null;
     }
 
-    const booking = await createBooking([
-      { eventId: event.eventId, marketId: "1", outcomeId },
-    ]);
     return {
-      ...booking,
       eventId: event.eventId,
+      marketId: "1",
+      outcomeId,
+      fixtureId: String(fixtureId || ""),
       homeTeam: home,
       awayTeam: away,
       predictedOutcome: String(prediction.predictedOutcome || "").toLowerCase(),
+      league: analysis.match?.league?.name || null,
+      kickoff: analysis.match?.kickoff || null,
     };
   } catch (e) {
     log(
-      `booking failed for ${analysis.match?.home?.name} vs ${analysis.match?.away?.name}: ${e.code || e.message}`
+      `slip selection failed for ${analysis.match?.home?.name} vs ${analysis.match?.away?.name}: ${e.code || e.message}`
     );
     return null;
   }
@@ -177,16 +179,28 @@ export async function runAutomation({ manual = false, overrides = {} } = {}) {
     const batch = discovered.slice(0, config.maxMatchesPerRun);
 
     let alertsToday = alertsSentToday();
+    const slipSelections = [];
 
     for (const norm of batch) {
       try {
-        await processOne({ id, norm, config, counts, getAlertsToday: () => alertsToday, bumpAlerts: () => alertsToday++ });
+        await processOne({ id, norm, config, counts, getAlertsToday: () => alertsToday, bumpAlerts: () => alertsToday++, slipSelections });
       } catch (e) {
         counts.errors++;
         log(`run ${id}: match ${norm.homeTeam} vs ${norm.awayTeam} failed: ${e.code || e.message}`);
       }
       // Gentle pacing for the free-tier rate limit (~10 req/min).
       await sleep(1500);
+    }
+
+    // ---- Combined SportyBet slip: one booking code for every qualified
+    // game in this run (slip reservation only — never a placed bet).
+    // Non-fatal: a booking failure never fails the run.
+    if (!dryRun && slipSelections.length > 0) {
+      try {
+        await createCombinedSlip({ id, config, selections: slipSelections });
+      } catch (e) {
+        log(`run ${id}: combined slip failed (non-fatal): ${e.message}`);
+      }
     }
 
     finishRun(id, counts, "completed", null);
@@ -203,7 +217,7 @@ export async function runAutomation({ manual = false, overrides = {} } = {}) {
   }
 }
 
-async function processOne({ id: runId, norm, config, counts, getAlertsToday, bumpAlerts }) {
+async function processOne({ id: runId, norm, config, counts, getAlertsToday, bumpAlerts, slipSelections }) {
   // ---- Match ----
   const matched = await matchFixture(norm);
   const matchRow = db
@@ -341,15 +355,16 @@ async function processOne({ id: runId, norm, config, counts, getAlertsToday, bum
     return;
   }
 
-  // SportyBet share-booking (slip reservation only — never a placed bet):
-  // created after the fixture qualifies; any failure is non-fatal and the
-  // alert still goes out without a code.
-  const booking = await maybeCreateBooking({
+  // SportyBet slip selection: collected across the run and combined into
+  // ONE booking code at the end of the run (createCombinedSlip). The alert
+  // goes out immediately without a code; the slip message follows the run.
+  const selection = await matchSportybetSelection({
     config,
     analysis,
     prediction: p,
     fixtureId: matched.fixtureId,
   });
+  if (selection) slipSelections.push(selection);
 
   const results = await notify({
     config,
@@ -358,7 +373,6 @@ async function processOne({ id: runId, norm, config, counts, getAlertsToday, bum
       prediction: p,
       modelVersion: analysis.modelVersion,
       qualification: q,
-      booking,
     },
   });
 
@@ -384,40 +398,6 @@ async function processOne({ id: runId, norm, config, counts, getAlertsToday, bum
     );
   }
 
-  // Persist the share-booking record (one row per successful booking), linked
-  // to the in-app alert when available. Non-fatal: never breaks the run.
-  if (booking) {
-    try {
-      const alertRow = db
-        .prepare(
-          `SELECT id FROM automation_alerts
-           WHERE prediction_id = ? AND notification_type = 'in_app'
-           ORDER BY id DESC LIMIT 1`
-        )
-        .get(predictionId);
-      db.prepare(
-        `INSERT INTO sportybet_bookings
-           (alert_id, fixture_id, sportybet_event_id, home_team, away_team,
-            predicted_outcome, share_code, share_url, deadline, created_at)
-         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
-      ).run(
-        alertRow ? Number(alertRow.id) : null,
-        String(matched.fixtureId),
-        String(booking.eventId || ""),
-        String(booking.homeTeam || ""),
-        String(booking.awayTeam || ""),
-        String(booking.predictedOutcome || ""),
-        booking.shareCode,
-        booking.shareURL,
-        booking.deadline,
-        new Date().toISOString()
-      );
-      log(`booking recorded: ${booking.shareCode} for ${booking.homeTeam} vs ${booking.awayTeam}`);
-    } catch (e) {
-      log(`booking persistence failed (non-fatal): ${e.message}`);
-    }
-  }
-
   counts.alerted++;
   bumpAlerts();
   log(`alert sent: ${analysis.match.home.name} vs ${analysis.match.away.name}`);
@@ -427,6 +407,77 @@ async function processOne({ id: runId, norm, config, counts, getAlertsToday, bum
     markError(`PIPELINE_FAILED: ${detail}`);
     throw e;
   }
+}
+
+// Create ONE combined SportyBet share-booking for every qualified game in
+// the run (slip reservation only — never a placed bet). Persists one
+// sportybet_bookings row per fixture sharing the code, then sends a single
+// combined slip message to Telegram. Never throws: any failure is logged
+// and the run is unaffected (the per-game pick alerts already went out).
+export async function createCombinedSlip({ id: runId, config, selections }) {
+  if (!config.sportyBetBookingEnabled) {
+    log(`run ${runId}: combined slip disabled, skipping`);
+    return null;
+  }
+  const items = (Array.isArray(selections) ? selections : []).slice(0, 20);
+  if (!items.length) return null;
+
+  let booking;
+  try {
+    booking = await createBooking(
+      items.map((s) => ({
+        eventId: s.eventId,
+        marketId: "1",
+        outcomeId: s.outcomeId,
+      }))
+    );
+  } catch (e) {
+    log(`run ${runId}: combined booking failed: ${e.message}`);
+    return null;
+  }
+
+  const now = new Date().toISOString();
+  for (const s of items) {
+    try {
+      const alertRow = db
+        .prepare(
+          `SELECT a.id FROM automation_alerts a
+           JOIN automation_predictions p ON p.id = a.prediction_id
+           JOIN automation_matches m ON m.id = p.automation_match_id
+           WHERE m.fixture_id = ? AND a.notification_type = 'in_app'
+           ORDER BY a.id DESC LIMIT 1`
+        )
+        .get(String(s.fixtureId));
+      db.prepare(
+        `INSERT INTO sportybet_bookings
+           (alert_id, fixture_id, sportybet_event_id, home_team, away_team,
+            predicted_outcome, share_code, share_url, deadline, created_at)
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
+      ).run(
+        alertRow ? Number(alertRow.id) : null,
+        String(s.fixtureId),
+        String(s.eventId || ""),
+        String(s.homeTeam || ""),
+        String(s.awayTeam || ""),
+        String(s.predictedOutcome || ""),
+        booking.shareCode,
+        booking.shareURL,
+        booking.deadline,
+        now
+      );
+    } catch (e) {
+      log(`run ${runId}: slip persistence failed for ${s.homeTeam} vs ${s.awayTeam} (non-fatal): ${e.message}`);
+    }
+  }
+
+  const results = await notifySlip({ config, games: items, booking }).catch((e) => ({
+    telegram: { ok: false, reason: e.message },
+  }));
+  log(
+    `run ${runId}: combined slip ${booking.shareCode} (${items.length} games), ` +
+      `telegram=${results.telegram && results.telegram.ok ? "sent" : "failed/skipped"}`
+  );
+  return booking;
 }
 
 function finishRun(id, counts, status, error) {

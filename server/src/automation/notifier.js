@@ -13,7 +13,7 @@ function mask(s) {
   return str.length <= 8 ? "***" : str.slice(0, 4) + "***" + str.slice(-4);
 }
 
-export function formatAlertMessage({ match, prediction, modelVersion, qualification, booking }) {
+export function formatAlertMessage({ match, prediction, modelVersion, qualification }) {
   const outcomeLabel = String(prediction.predictedOutcome || "").toUpperCase();
   const lines = [
     "━━━━━━━━━━━━━━━━━━━━",
@@ -55,15 +55,37 @@ export function formatAlertMessage({ match, prediction, modelVersion, qualificat
   lines.push("");
   lines.push(`🤖 Model: poisson-dixon-coles ${modelVersion}`);
   lines.push("");
-  if (booking && booking.shareCode) {
-    // Share-booking block: a slip reservation only. Never worded as a placed
-    // bet and never instructs the user to bet.
-    lines.push(`🎫 SportyBet booking code: ${booking.shareCode}`);
-    if (booking.shareURL) lines.push(String(booking.shareURL));
-    if (booking.deadline) lines.push(`(code valid until ${formatDeadline(booking.deadline)})`);
-    lines.push("Slip reservation only — no bet was placed.");
-    lines.push("");
-  }
+  lines.push("━━━━━━━━━━━━━━━━━━━━");
+  lines.push("OBULU analysis only.");
+  lines.push("Final decision remains with the user.");
+  lines.push("━━━━━━━━━━━━━━━━━━━━");
+  return lines.join("\n");
+}
+
+// Combined slip message: one SportyBet booking code covering every
+// qualified game in the run. A slip reservation only — never worded as a
+// placed bet and never instructs the user to bet.
+export function formatSlipMessage({ games, booking }) {
+  const n = Array.isArray(games) ? games.length : 0;
+  const lines = [
+    "━━━━━━━━━━━━━━━━━━━━",
+    `🎫 OBULU COMBINED SLIP (${n} game${n === 1 ? "" : "s"})`,
+    "━━━━━━━━━━━━━━━━━━━━",
+    "",
+    `SportyBet booking code: ${booking.shareCode}`,
+  ];
+  if (booking.shareURL) lines.push(String(booking.shareURL));
+  if (booking.deadline) lines.push(`(code valid until ${formatDeadline(booking.deadline)})`);
+  lines.push("");
+  lines.push("Games on this slip:");
+  (games || []).forEach((g, i) => {
+    const pick = String(g.predictedOutcome || "").toUpperCase();
+    const pickName =
+      pick === "HOME" ? g.homeTeam : pick === "AWAY" ? g.awayTeam : "Draw";
+    lines.push(`${i + 1}. ${g.homeTeam} vs ${g.awayTeam} — ${pickName}`);
+  });
+  lines.push("");
+  lines.push("Slip reservation only — no bet was placed.");
   lines.push("━━━━━━━━━━━━━━━━━━━━");
   lines.push("OBULU analysis only.");
   lines.push("Final decision remains with the user.");
@@ -121,6 +143,23 @@ async function sendTelegram({ botToken, chatId, text }) {
     return { ok: false, reason: body.description || `HTTP ${res.status}` };
   }
   return { ok: true, messageId: body.result?.message_id };
+}
+
+// Sends the combined slip message through all configured channels.
+// Currently Telegram-only by design (the booking code is for the user);
+// the per-game pick alerts already cover the in-app feed.
+export async function notifySlip({ config, games, booking }) {
+  const text = formatSlipMessage({ games, booking });
+  const results = {};
+  results.telegram = await sendTelegram({
+    botToken: config.telegramBotToken,
+    chatId: config.telegramChatId,
+    text: text.replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;"),
+  }).catch((e) => ({ ok: false, reason: e.message }));
+  if (!results.telegram.ok && !results.telegram.skipped) {
+    log(`slip telegram send failed (token ${mask(config.telegramBotToken)}): ${results.telegram.reason}`);
+  }
+  return results;
 }
 
 // Sends through all configured channels. Returns per-channel results.

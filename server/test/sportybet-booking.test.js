@@ -3,10 +3,9 @@
 // shareCode (never fabricates), non-JSON body, invalid selections input
 // (no HTTP attempted), HOME/DRAW/AWAY -> outcome id 1/2/3 mapping,
 // disabled config -> null with no fetch, dry-run hook placement
-// (structural), failure-is-non-fatal (stubbed fetch throw -> null, alert
-// still goes out without a code), no fuzzy match -> silent skip, and the
-// notifier booking block (code/deadline shown, slip-reservation wording,
-// omitted entirely when booking is null).
+// (structural), matching never fetches (booking happens once per run),
+// no fuzzy match -> silent skip, and the combined slip message
+// (games listed with picks, code/deadline shown, slip-reservation wording).
 // No live network: global fetch is stubbed and the SportyBet cache is
 // seeded on a scratch DB — never the dev database.
 import assert from "node:assert";
@@ -18,8 +17,8 @@ process.env.DB_PATH = DB_FILE;
 process.env.SPORTYBET_ENABLED = "true";
 
 const { createBooking } = await import("../src/sportybet/booking.js");
-const { maybeCreateBooking } = await import("../src/automation/runner.js");
-const { formatAlertMessage } = await import("../src/automation/notifier.js");
+const { matchSportybetSelection, createCombinedSlip } = await import("../src/automation/runner.js");
+const { formatSlipMessage } = await import("../src/automation/notifier.js");
 const { SPORTYBET_CACHE_KEY } = await import("../src/sportybet/client.js");
 const { cacheSet } = await import("../src/cache.js");
 await import("../src/db/database.js"); // ensure scratch tables exist
@@ -164,33 +163,31 @@ await check("createBooking: invalid selections throw before any HTTP", async () 
 });
 
 // -------------------------------------- outcome mapping + runner hook ---
-await check("maybeCreateBooking maps HOME->1, DRAW->2, AWAY->3", async () => {
+await check("matchSportybetSelection maps HOME->1, DRAW->2, AWAY->3 (no fetch yet)", async () => {
   for (const [predicted, expected] of [["HOME", "1"], ["draw", "2"], ["Away", "3"]]) {
     seedEvents([cachedEvent()]);
-    fetchBehavior = "ok";
-    lastRequest = null;
+    fetchCalls = 0;
     const { analysis, prediction, fixtureId } = analysisFor(predicted);
-    const booking = await maybeCreateBooking({
+    const sel = await matchSportybetSelection({
       config: { sportyBetBookingEnabled: true },
       analysis,
       prediction,
       fixtureId,
     });
-    assert.ok(booking, `booking returned for ${predicted}`);
-    assert.strictEqual(booking.shareCode, "WGB4BE");
-    assert.strictEqual(booking.eventId, "sb-ev-1");
-    assert.strictEqual(booking.predictedOutcome, predicted.toLowerCase());
-    const sent = JSON.parse(lastRequest.opts.body);
-    assert.strictEqual(sent.selections[0].outcomeId, expected, `${predicted} -> ${expected}`);
-    assert.strictEqual(sent.selections[0].marketId, "1");
+    assert.ok(sel, `selection returned for ${predicted}`);
+    assert.strictEqual(sel.outcomeId, expected, `${predicted} -> ${expected}`);
+    assert.strictEqual(sel.marketId, "1");
+    assert.strictEqual(sel.eventId, "sb-ev-1");
+    assert.strictEqual(sel.predictedOutcome, predicted.toLowerCase());
+    assert.strictEqual(fetchCalls, 0, "matching never hits the network — booking happens once per run");
   }
 });
 
-await check("maybeCreateBooking: disabled config returns null, no fetch", async () => {
+await check("matchSportybetSelection: disabled config returns null, no fetch", async () => {
   seedEvents([cachedEvent()]);
   fetchCalls = 0;
   const { analysis, prediction, fixtureId } = analysisFor("HOME");
-  const r = await maybeCreateBooking({
+  const r = await matchSportybetSelection({
     config: { sportyBetBookingEnabled: false },
     analysis,
     prediction,
@@ -200,112 +197,135 @@ await check("maybeCreateBooking: disabled config returns null, no fetch", async 
   assert.strictEqual(fetchCalls, 0, "no fetch when booking disabled");
 });
 
-await check("runner: dry-run early-return sits before the booking hook (structural)", () => {
+await check("runner: dry-run early-return sits before the slip-selection hook (structural)", () => {
   const src = fs.readFileSync(new URL("../src/automation/runner.js", import.meta.url), "utf8");
   const dryRunIdx = src.indexOf("if (config.dryRun)");
-  const bookingIdx = src.indexOf("await maybeCreateBooking(");
+  const selIdx = src.indexOf("await matchSportybetSelection(");
+  const slipIdx = src.indexOf("await createCombinedSlip(");
   assert.ok(dryRunIdx !== -1, "dry-run guard exists in runner.js");
-  assert.ok(bookingIdx !== -1, "maybeCreateBooking hook exists in runner.js");
-  assert.ok(dryRunIdx < bookingIdx, "dry-run return precedes the booking hook — dryRun=true never reaches booking");
+  assert.ok(selIdx !== -1, "matchSportybetSelection hook exists in runner.js");
+  assert.ok(slipIdx !== -1, "createCombinedSlip hook exists in runner.js");
+  assert.ok(dryRunIdx < selIdx, "dry-run return precedes the selection hook — dryRun=true never reaches booking");
 });
 
-await check("maybeCreateBooking: fetch failure is non-fatal, returns null", async () => {
-  seedEvents([cachedEvent()]);
-  fetchBehavior = "throw";
+await check("matchSportybetSelection: no fuzzy match -> skipped silently", async () => {
+  seedEvents([cachedEvent({ homeTeam: "Real Madrid", awayTeam: "Barcelona", tournament: "Spain - La Liga" })]);
   const { analysis, prediction, fixtureId } = analysisFor("HOME");
-  const r = await maybeCreateBooking({
+  const r = await matchSportybetSelection({
     config: { sportyBetBookingEnabled: true },
     analysis,
     prediction,
     fixtureId,
+  });
+  assert.strictEqual(r, null);
+});
+
+await check("matchSportybetSelection: no 1X2 odds -> skipped", async () => {
+  seedEvents([cachedEvent({ odds: null })]);
+  const { analysis, prediction, fixtureId } = analysisFor("HOME");
+  const r = await matchSportybetSelection({
+    config: { sportyBetBookingEnabled: true },
+    analysis,
+    prediction,
+    fixtureId,
+  });
+  assert.strictEqual(r, null);
+});
+
+await check("matchSportybetSelection: past kickoff -> skipped", async () => {
+  seedEvents([cachedEvent({ kickoffISO: new Date(Date.now() - 3600 * 1000).toISOString() })]);
+  const { analysis, prediction, fixtureId } = analysisFor("HOME");
+  const r = await matchSportybetSelection({
+    config: { sportyBetBookingEnabled: true },
+    analysis,
+    prediction,
+    fixtureId,
+  });
+  assert.strictEqual(r, null);
+});
+
+// ------------------------------------------- combined slip ---
+await check("createCombinedSlip: one booking for N selections, one HTTP call", async () => {
+  fetchBehavior = "ok";
+  fetchCalls = 0;
+  lastRequest = null;
+  const selections = [
+    { eventId: "sb-ev-1", marketId: "1", outcomeId: "1", fixtureId: "fx-1", homeTeam: "Arsenal", awayTeam: "Chelsea", predictedOutcome: "home" },
+    { eventId: "sb-ev-2", marketId: "1", outcomeId: "2", fixtureId: "fx-2", homeTeam: "Real Madrid", awayTeam: "Barcelona", predictedOutcome: "draw" },
+    { eventId: "sb-ev-3", marketId: "1", outcomeId: "3", fixtureId: "fx-3", homeTeam: "Inter", awayTeam: "Milan", predictedOutcome: "away" },
+  ];
+  const booking = await createCombinedSlip({
+    id: "test-run-1",
+    config: { sportyBetBookingEnabled: true },
+    selections,
+  });
+  assert.ok(booking, "combined booking returned");
+  assert.strictEqual(booking.shareCode, "WGB4BE");
+  assert.strictEqual(fetchCalls, 1, "exactly one booking HTTP call for the whole slip");
+  const sent = JSON.parse(lastRequest.opts.body);
+  assert.strictEqual(sent.selections.length, 3, "all three selections in one slip");
+  assert.deepStrictEqual(
+    sent.selections.map((s) => s.outcomeId),
+    ["1", "2", "3"]
+  );
+});
+
+await check("createCombinedSlip: disabled config -> null, no fetch", async () => {
+  fetchCalls = 0;
+  const r = await createCombinedSlip({
+    id: "test-run-2",
+    config: { sportyBetBookingEnabled: false },
+    selections: [{ eventId: "sb-ev-1", marketId: "1", outcomeId: "1", fixtureId: "fx-1" }],
+  });
+  assert.strictEqual(r, null);
+  assert.strictEqual(fetchCalls, 0, "no fetch when booking disabled");
+});
+
+await check("createCombinedSlip: booking failure is non-fatal, returns null", async () => {
+  fetchBehavior = "throw";
+  const r = await createCombinedSlip({
+    id: "test-run-3",
+    config: { sportyBetBookingEnabled: true },
+    selections: [{ eventId: "sb-ev-1", marketId: "1", outcomeId: "1", fixtureId: "fx-1", homeTeam: "A", awayTeam: "B", predictedOutcome: "home" }],
   });
   assert.strictEqual(r, null, "never throws — failure is non-fatal");
   fetchBehavior = "ok";
 });
 
-await check("maybeCreateBooking: no fuzzy match -> skipped silently, no fetch", async () => {
-  seedEvents([cachedEvent({ homeTeam: "Real Madrid", awayTeam: "Barcelona", tournament: "Spain - La Liga" })]);
+await check("createCombinedSlip: empty selections -> null, no fetch", async () => {
   fetchCalls = 0;
-  const { analysis, prediction, fixtureId } = analysisFor("HOME");
-  const r = await maybeCreateBooking({
+  const r = await createCombinedSlip({
+    id: "test-run-4",
     config: { sportyBetBookingEnabled: true },
-    analysis,
-    prediction,
-    fixtureId,
+    selections: [],
   });
   assert.strictEqual(r, null);
-  assert.strictEqual(fetchCalls, 0, "no HTTP without a matching event");
+  assert.strictEqual(fetchCalls, 0);
 });
 
-await check("maybeCreateBooking: no 1X2 odds -> skipped, no fetch", async () => {
-  seedEvents([cachedEvent({ odds: null })]);
-  fetchCalls = 0;
-  const { analysis, prediction, fixtureId } = analysisFor("HOME");
-  const r = await maybeCreateBooking({
-    config: { sportyBetBookingEnabled: true },
-    analysis,
-    prediction,
-    fixtureId,
-  });
-  assert.strictEqual(r, null);
-  assert.strictEqual(fetchCalls, 0, "no HTTP when the event has no 1X2 odds");
-});
-
-await check("maybeCreateBooking: past kickoff -> skipped, no fetch", async () => {
-  seedEvents([cachedEvent({ kickoffISO: new Date(Date.now() - 3600 * 1000).toISOString() })]);
-  fetchCalls = 0;
-  const { analysis, prediction, fixtureId } = analysisFor("HOME");
-  const r = await maybeCreateBooking({
-    config: { sportyBetBookingEnabled: true },
-    analysis,
-    prediction,
-    fixtureId,
-  });
-  assert.strictEqual(r, null);
-  assert.strictEqual(fetchCalls, 0, "no HTTP for a match that already kicked off");
-});
-
-// -------------------------------------------------- notifier booking block ---
-const basePayload = () => ({
-  match: {
-    home: { name: "Arsenal" },
-    away: { name: "Chelsea" },
-    league: { name: "England - Premier League" },
-    kickoff: FUTURE_KICKOFF,
-  },
-  prediction: {
-    predictedOutcome: "HOME",
-    homeWin: 55,
-    draw: 25,
-    awayWin: 20,
-    confidence: 72,
-    dataCompleteness: 88,
-  },
-  modelVersion: "v1",
-  qualification: { qualified: true },
-});
-
-await check("formatAlertMessage: booking block shows code, URL, deadline + slip-reservation wording", () => {
-  const text = formatAlertMessage({
-    ...basePayload(),
+// -------------------------------------------------- slip message ---
+await check("formatSlipMessage: lists games with picks + code, URL, deadline, slip-reservation wording", () => {
+  const text = formatSlipMessage({
+    games: [
+      { homeTeam: "Arsenal", awayTeam: "Chelsea", predictedOutcome: "home" },
+      { homeTeam: "Real Madrid", awayTeam: "Barcelona", predictedOutcome: "draw" },
+      { homeTeam: "Inter", awayTeam: "Milan", predictedOutcome: "away" },
+    ],
     booking: {
       shareCode: "WGB4BE",
       shareURL: "https://www.sportybet.com/ng/share/WGB4BE",
       deadline: "2026-10-10T17:30:00.000Z",
     },
   });
-  assert.ok(text.includes("🎫 SportyBet booking code: WGB4BE"), "code line present");
+  assert.ok(text.includes("COMBINED SLIP (3 games)"), "slip header with game count");
+  assert.ok(text.includes("1. Arsenal vs Chelsea — Arsenal"), "home pick named");
+  assert.ok(text.includes("2. Real Madrid vs Barcelona — Draw"), "draw pick named");
+  assert.ok(text.includes("3. Inter vs Milan — Milan"), "away pick named");
+  assert.ok(text.includes("SportyBet booking code: WGB4BE"), "code line present");
   assert.ok(text.includes("https://www.sportybet.com/ng/share/WGB4BE"), "URL line present");
   assert.ok(text.includes("code valid until"), "deadline line present");
   assert.ok(text.includes("Slip reservation only — no bet was placed."), "slip-reservation wording");
-});
-
-await check("formatAlertMessage: no booking block when booking is null (failed booking still alerts)", () => {
-  const text = formatAlertMessage({ ...basePayload(), booking: null });
-  assert.ok(!text.includes("booking code"), "no booking block without a booking");
-  assert.ok(text.includes("OBULU QUALIFIED MATCH"), "alert text still produced");
-  const failed = formatAlertMessage({ ...basePayload(), booking: null });
-  assert.ok(!failed.includes("WGB4BE"), "no fabricated code on failure");
+  assert.ok(!text.toLowerCase().includes("bet now"), "no betting call to action");
 });
 
 globalThis.fetch = realFetch;
