@@ -6,6 +6,7 @@ import { db } from "../db/database.js";
 import { getProvider, providerKind, oddsEnabled } from "../providers/index.js";
 import * as oddsApi from "../providers/oddsApi.js";
 import { cacheGet, cacheSet } from "../cache.js";
+import { getCached, recordPrediction, getMetrics, dedup } from "../perf.js";
 import { predictMatch, DISCLAIMER, MODEL_VERSION, METHOD } from "../model/poisson.js";
 import { recordPredictionSnapshot } from "../calendar/snapshots.js";
 
@@ -72,11 +73,12 @@ router.get(
   requireProvider,
   asyncHandler(async (req, res) => {
     const key = "leagues:all";
-    let leagues = cacheGet(key);
-    if (!leagues) {
-      leagues = await req.provider.getLeagues();
-      cacheSet(key, leagues, "leagues");
-    }
+    const { value: leagues } = await getCached(
+      key,
+      "leagues",
+      () => req.provider.getLeagues(),
+      { staleTtlSec: 7 * 24 * 3600 }
+    );
     res.json({ leagues, sampleData: isSample() });
   })
 );
@@ -91,15 +93,19 @@ router.get(
       return badRequest(res, 'Query parameter "date" must be YYYY-MM-DD.');
     }
     const key = `fixtures:upcoming:${league || "all"}:${date || "all"}:${team || "all"}`;
-    let fixtures = cacheGet(key);
-    if (!fixtures) {
-      fixtures = await req.provider.getUpcomingFixtures({
-        league: league || undefined,
-        date: date || undefined,
-        team: team || undefined,
-      });
-      cacheSet(key, fixtures, "fixtures");
-    }
+    // SWR: instant response from cache; background refresh when stale.
+    const { value: fixtures, stale } = await getCached(
+      key,
+      "fixtures",
+      () =>
+        req.provider.getUpcomingFixtures({
+          league: league || undefined,
+          date: date || undefined,
+          team: team || undefined,
+        }),
+      { staleTtlSec: 2 * 3600 }
+    );
+    if (stale) res.set("X-OBULU-Cache", "stale");
     res.json({ fixtures, sampleData: isSample() });
   })
 );
@@ -117,17 +123,21 @@ router.get(
       return badRequest(res, 'Query parameter "date" must be YYYY-MM-DD.');
     }
     const key = `fixtures:all:${league || "all"}:${date || "all"}:${team || "all"}`;
-    let fixtures = cacheGet(key);
-    if (!fixtures) {
-      const hasFilter = league || date || team;
-      fixtures = await req.provider.getUpcomingFixtures({
-        league: league || undefined,
-        date: date || undefined,
-        team: team || undefined,
-      });
-      if (!hasFilter) fixtures = fixtures.slice(0, 60);
-      cacheSet(key, fixtures, "fixtures");
-    }
+    const hasFilter = league || date || team;
+    const { value: fixtures, stale } = await getCached(
+      key,
+      "fixtures",
+      async () => {
+        const list = await req.provider.getUpcomingFixtures({
+          league: league || undefined,
+          date: date || undefined,
+          team: team || undefined,
+        });
+        return hasFilter ? list : list.slice(0, 60);
+      },
+      { staleTtlSec: 2 * 3600 }
+    );
+    if (stale) res.set("X-OBULU-Cache", "stale");
     res.json({ fixtures, sampleData: isSample() });
   })
 );
@@ -150,17 +160,18 @@ router.get(
   requireProvider,
   asyncHandler(async (req, res) => {
     const key = `match:${req.params.id}`;
-    let match = cacheGet(key);
-    if (!match) {
-      match = await req.provider.getMatch(req.params.id);
-      if (match) cacheSet(key, match, "fixtures");
-    }
+    const { value: match, stale } = await getCached(
+      key,
+      "fixtures",
+      () => req.provider.getMatch(req.params.id),
+      { staleTtlSec: 2 * 3600 }
+    );
     if (!match) return notFound(res, `Match ${req.params.id} not found.`);
+    if (stale) res.set("X-OBULU-Cache", "stale");
     res.json({ match, sampleData: isSample() });
   })
 );
 
-// ------------------------------------------------------- matches analysis ---
 function summarizeRecentForm(recentForm) {
   const last = (recentForm || []).slice(0, 5);
   const results = [];
@@ -201,15 +212,15 @@ function summarizeHomeAway(recentForm, venue /* true=home record, false=away rec
   return { played: list.length, wins, draws, losses, goalsFor, goalsAgainst };
 }
 
-router.get(
-  "/matches/:id/analysis",
-  requireProvider,
-  asyncHandler(async (req, res) => {
-    const provider = req.provider;
-    const match = await provider.getMatch(req.params.id);
-    if (!match) return notFound(res, `Match ${req.params.id} not found.`);
+// ------------------------------------------------------- matches analysis ---
+// Composed analysis payload, cached 30 min: the underlying team stats and
+// standings change slowly, so rebuilding (6 API calls) on every view was
+// pure waste. SWR serves the last analysis instantly while refreshing.
+async function computeAnalysis(provider, matchId) {
+  const match = await provider.getMatch(matchId);
+  if (!match) return null;
 
-    const settled = await Promise.allSettled([
+  const settled = await Promise.allSettled([
       provider.getTeamStats(match.home.id, match.league.id),
       provider.getTeamStats(match.away.id, match.league.id),
       provider.getHeadToHead(match.home.id, match.away.id),
@@ -232,7 +243,7 @@ router.get(
         : { position: null, played: null, points: null };
     };
 
-    res.json({
+    return {
       match,
       recentForm: {
         home: summarizeRecentForm(homeStats.recentForm),
@@ -245,100 +256,157 @@ router.get(
       headToHead: h2h,
       standings: { home: st(match.home.id), away: st(match.away.id) },
       injuries: { home: injHome, away: injAway },
-      sampleData: isSample(),
-    });
+  };
+}
+
+router.get(
+  "/matches/:id/analysis",
+  requireProvider,
+  asyncHandler(async (req, res) => {
+    const key = `analysis:${req.params.id}`;
+    const { value: payload, stale } = await getCached(
+      key,
+      "analysis",
+      () => computeAnalysis(req.provider, req.params.id),
+      { staleTtlSec: 6 * 3600 }
+    );
+    if (!payload) return notFound(res, `Match ${req.params.id} not found.`);
+    res.set("X-OBULU-Cache", stale ? "stale" : "hit");
+    res.json({ ...payload, sampleData: isSample() });
   })
 );
 
 // ------------------------------------------------------ matches prediction ---
-router.get(
-  "/matches/:id/prediction",
-  requireProvider,
-  asyncHandler(async (req, res) => {
-    const provider = req.provider;
-    const match = await provider.getMatch(req.params.id);
-    if (!match) return notFound(res, `Match ${req.params.id} not found.`);
+// The full prediction payload is cached (6h): the model inputs (team stats,
+// league averages) change slowly, so recalculating on every page view was
+// 6-7 football API calls for zero new information. Only a cache miss
+// recomputes; the predictions audit row + immutable calendar snapshot are
+// written on recompute only (previously every view wrote a duplicate row).
+async function computePrediction(provider, matchId) {
+  const provider2 = provider;
+  const match = await provider2.getMatch(matchId);
+  if (!match) return null;
 
-    const [homeStats, awayStats] = await Promise.all([
-      provider.getTeamStats(match.home.id, match.league.id),
-      provider.getTeamStats(match.away.id, match.league.id),
-    ]);
+  const [homeStats, awayStats] = await Promise.all([
+    provider2.getTeamStats(match.home.id, match.league.id),
+    provider2.getTeamStats(match.away.id, match.league.id),
+  ]);
 
-    // Best-effort auxiliaries: prediction must still work without them.
-    let h2h = null, leagueAvgs = null, odds = null;
-    try { h2h = await provider.getHeadToHead(match.home.id, match.away.id); } catch { /* optional */ }
-    try { leagueAvgs = await provider.getLeagueAvgs(match.league.id); } catch { /* optional */ }
-    try {
-      if (typeof provider.getOdds === "function") odds = await provider.getOdds(match.id);
-      if (!odds) odds = await oddsApi.getOdds(match);
-    } catch { /* optional */ }
+  // Best-effort auxiliaries: prediction must still work without them.
+  // h2h/leagueAvgs are independent -> concurrent, not sequential.
+  const [h2h, leagueAvgs] = await Promise.all([
+    provider2.getHeadToHead(match.home.id, match.away.id).catch(() => null),
+    provider2.getLeagueAvgs(match.league.id).catch(() => null),
+  ]);
+  let odds = null;
+  try {
+    if (typeof provider2.getOdds === "function") odds = await provider2.getOdds(match.id);
+    if (!odds) odds = await oddsApi.getOdds(match);
+  } catch { /* optional */ }
 
-    const result = predictMatch(homeStats, awayStats, leagueAvgs, h2h, odds, {
-      oddsWeight: config.modelOddsWeight,
-    });
+  const result = predictMatch(homeStats, awayStats, leagueAvgs, h2h, odds, {
+    oddsWeight: config.modelOddsWeight,
+  });
+  recordPrediction(true);
 
-    // Persist the prediction for audit / future calibration work.
-    db.prepare(
-      `INSERT INTO predictions
-         (match_id, home_win, draw, away_win, outcome, model_version,
-          blended_with_odds, data_completeness, sample, created_at)
-       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
-    ).run(
-      match.id,
-      result.homeWin,
-      result.draw,
-      result.awayWin,
-      result.predictedOutcome,
-      MODEL_VERSION,
-      result.blendedWithOdds ? 1 : 0,
-      result.dataCompleteness,
-      isSample() ? 1 : 0,
-      new Date().toISOString()
-    );
+  // Persist the prediction for audit / future calibration work (once per
+  // computation, not once per page view).
+  db.prepare(
+    `INSERT INTO predictions
+       (match_id, home_win, draw, away_win, outcome, model_version,
+        blended_with_odds, data_completeness, sample, created_at)
+     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
+  ).run(
+    match.id,
+    result.homeWin,
+    result.draw,
+    result.awayWin,
+    result.predictedOutcome,
+    MODEL_VERSION,
+    result.blendedWithOdds ? 1 : 0,
+    result.dataCompleteness,
+    providerKind() === "sample" ? 1 : 0,
+    new Date().toISOString()
+  );
 
-    // Immutable calendar snapshot (first prediction wins). Never breaks
-    // the endpoint: recordPredictionSnapshot never throws, but stay safe.
-    try {
-      recordPredictionSnapshot(
-        { id: match.id, home: match.home, away: match.away, league: match.league, kickoff: match.kickoff },
-        {
-          homeWin: result.homeWin,
-          draw: result.draw,
-          awayWin: result.awayWin,
-          predictedOutcome: result.predictedOutcome,
-          confidence: result.confidence,
-          dataCompleteness: result.dataCompleteness,
-          expectedGoals: result.expectedGoals,
-          factors: result.factors,
-          blendedWithOdds: result.blendedWithOdds,
-        }
-      );
-    } catch { /* snapshot failure must never break predictions */ }
-
-    res.json({
-      match: {
-        id: match.id,
-        home: { id: match.home.id, name: match.home.name },
-        away: { id: match.away.id, name: match.away.name },
-        league: match.league,
-        kickoff: match.kickoff,
-      },
-      prediction: {
+  // Immutable calendar snapshot (first prediction wins). Never breaks
+  // the endpoint: recordPredictionSnapshot never throws, but stay safe.
+  try {
+    recordPredictionSnapshot(
+      { id: match.id, home: match.home, away: match.away, league: match.league, kickoff: match.kickoff },
+      {
         homeWin: result.homeWin,
         draw: result.draw,
         awayWin: result.awayWin,
         predictedOutcome: result.predictedOutcome,
         confidence: result.confidence,
-        factors: result.factors,
-        disclaimer: DISCLAIMER,
-      },
-      model: {
-        method: METHOD,
-        blendedWithOdds: result.blendedWithOdds,
         dataCompleteness: result.dataCompleteness,
-      },
-      sampleData: isSample(),
-    });
+        expectedGoals: result.expectedGoals,
+        factors: result.factors,
+        blendedWithOdds: result.blendedWithOdds,
+      }
+    );
+  } catch { /* snapshot failure must never break predictions */ }
+
+  return {
+    match: {
+      id: match.id,
+      home: { id: match.home.id, name: match.home.name },
+      away: { id: match.away.id, name: match.away.name },
+      league: match.league,
+      kickoff: match.kickoff,
+    },
+    prediction: {
+      homeWin: result.homeWin,
+      draw: result.draw,
+      awayWin: result.awayWin,
+      predictedOutcome: result.predictedOutcome,
+      confidence: result.confidence,
+      factors: result.factors,
+      disclaimer: DISCLAIMER,
+    },
+    model: {
+      method: METHOD,
+      blendedWithOdds: result.blendedWithOdds,
+      dataCompleteness: result.dataCompleteness,
+    },
+  };
+}
+
+router.get(
+  "/matches/:id/prediction",
+  requireProvider,
+  asyncHandler(async (req, res) => {
+    const key = `prediction:${req.params.id}`;
+    // SWR: serve the last prediction instantly; refresh in background when stale.
+    const { value: payload, stale } = await getCached(
+      key,
+      "predictions",
+      () => computePrediction(req.provider, req.params.id),
+      { staleTtlSec: 24 * 3600 }
+    );
+    if (!payload) return notFound(res, `Match ${req.params.id} not found.`);
+    res.set("X-OBULU-Cache", stale ? "stale" : "hit");
+    res.json({ ...payload, sampleData: isSample() });
+  })
+);
+
+// --------------------------------------------------------------- metrics ---
+// Lightweight internal performance observability: API call counts/timings,
+// cache hit rates, dedup savings. No sensitive data. Requires the admin key
+// when AUTOMATION_ADMIN_KEY is set (same posture as automation mutating
+// endpoints); open in dev when unset.
+router.get(
+  "/metrics",
+  asyncHandler(async (req, res) => {
+    const adminKey = process.env.AUTOMATION_ADMIN_KEY;
+    if (adminKey) {
+      const provided = req.headers["x-admin-key"] || req.query.admin_key;
+      if (provided !== adminKey) {
+        return res.status(403).json({ error: "FORBIDDEN", message: "Valid X-Admin-Key required." });
+      }
+    }
+    res.json(getMetrics());
   })
 );
 

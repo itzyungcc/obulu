@@ -22,6 +22,20 @@ import { localApiFetch } from "./localApi.js";
 
 const OFFLINE = import.meta.env.VITE_OBULU_OFFLINE === "1";
 
+// --- Request deduplication -----------------------------------------------
+// If several components request the same URL simultaneously (e.g. 10 cards
+// needing the same fixtures), only one network request goes out; the rest
+// share its promise. Entries clear when settled.
+const inflightGets = new Map();
+
+// --- Cold-start retry ------------------------------------------------------
+// Render's free tier sleeps when idle: the first request after a quiet
+// period fails or hangs while the backend wakes (~up to a minute).
+// Retry network failures with exponential backoff instead of showing an
+// instant error.
+const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
+const RETRY_DELAYS = [1500, 3000, 6000]; // ms between attempts 1..3
+
 export async function apiFetch(path, params = {}) {
   if (OFFLINE) return localApiFetch(path, params);
   const { method, body: reqBody, headers, ...query } = params;
@@ -30,41 +44,71 @@ export async function apiFetch(path, params = {}) {
   );
   const qs = new URLSearchParams(entries).toString();
   const url = `${API_BASE}/api${path}${qs ? `?${qs}` : ""}`;
+  const isGet = !method || method.toUpperCase() === "GET";
 
-  let res;
-  try {
-    res = await fetch(url, {
-      ...(method ? { method } : {}),
-      ...(reqBody !== undefined
-        ? {
-            body: typeof reqBody === "string" ? reqBody : JSON.stringify(reqBody),
-            headers: { "Content-Type": "application/json", ...(headers || {}) },
-          }
-        : {}),
-    });
-  } catch {
-    throw new ApiError(
-      0,
-      "NETWORK_ERROR",
-      "Could not reach the OBULU API. Check your connection and that the server is running, then try again."
+  // Dedupe identical in-flight GETs.
+  if (isGet && inflightGets.has(url)) return inflightGets.get(url);
+
+  const task = (async () => {
+    let lastErr = null;
+    const attempts = isGet ? RETRY_DELAYS.length + 1 : 1;
+    for (let attempt = 0; attempt < attempts; attempt++) {
+      if (attempt > 0) await sleep(RETRY_DELAYS[attempt - 1]);
+      let res;
+      try {
+        res = await fetch(url, {
+          ...(method ? { method } : {}),
+          ...(reqBody !== undefined
+            ? {
+                body: typeof reqBody === "string" ? reqBody : JSON.stringify(reqBody),
+                headers: { "Content-Type": "application/json", ...(headers || {}) },
+              }
+            : {}),
+        });
+      } catch (e) {
+        lastErr = new ApiError(
+          0,
+          "NETWORK_ERROR",
+          attempt === 0
+            ? "Could not reach the OBULU API. Check your connection and that the server is running, then try again."
+            : "OBULU is waking up — loading the latest football data..."
+        );
+        continue; // retry: likely a Render cold start
+      }
+
+      let body = null;
+      try {
+        body = await res.json();
+      } catch {
+        body = null;
+      }
+
+      if (!res.ok) {
+        // 5xx on a GET right after wake: the backend may still be starting.
+        // Retry those too; 4xx are real client errors — throw immediately.
+        if (isGet && res.status >= 500 && attempt < attempts - 1) {
+          lastErr = new ApiError(res.status, body?.error || "REQUEST_FAILED", "OBULU is waking up — loading the latest football data...");
+          continue;
+        }
+        throw new ApiError(
+          res.status,
+          body?.error || "REQUEST_FAILED",
+          body?.message || `Request failed (HTTP ${res.status}).`
+        );
+      }
+      return body ?? {};
+    }
+    throw lastErr;
+  })();
+
+  if (isGet) {
+    inflightGets.set(url, task);
+    task.then(
+      () => inflightGets.delete(url),
+      () => inflightGets.delete(url)
     );
   }
-
-  let body = null;
-  try {
-    body = await res.json();
-  } catch {
-    body = null;
-  }
-
-  if (!res.ok) {
-    throw new ApiError(
-      res.status,
-      body?.error || "REQUEST_FAILED",
-      body?.message || `Request failed (HTTP ${res.status}).`
-    );
-  }
-  return body ?? {};
+  return task;
 }
 
 export const getHealth = () => apiFetch("/health");

@@ -10,6 +10,8 @@ export const CACHE_TTLS = {
   odds: 30 * 60, // 30 min
   leagues: 24 * 3600, // 24 h
   live: 120, // 2 min — in-play data goes stale fast; key prefix "live:"
+  predictions: 6 * 3600, // 6 h — model outputs; inputs are teamStats(6h)/standings(6h)
+  analysis: 30 * 60, // 30 min — composed match analysis payload
 };
 
 export function cacheGet(key) {
@@ -39,6 +41,28 @@ export function cacheSet(key, value, ttlName) {
   db.prepare("DELETE FROM cache_meta WHERE expires_at < ?").run(
     new Date().toISOString()
   );
+}
+
+// Returns { value, expired, expiresAt } or null. Unlike cacheGet, expired
+// rows are returned (not deleted) so callers can do stale-while-revalidate
+// or degraded fallback. Callers must handle JSON parsing (value is parsed
+// here; returns raw string on parse failure, matching cacheGet behavior).
+export function cacheGetWithMeta(key) {
+  const row = db
+    .prepare("SELECT value, expires_at FROM cache_meta WHERE key = ?")
+    .get(key);
+  if (!row) return null;
+  let value;
+  try {
+    value = JSON.parse(row.value);
+  } catch {
+    value = row.value;
+  }
+  return {
+    value,
+    expired: Date.parse(row.expires_at) < Date.now(),
+    expiresAt: row.expires_at,
+  };
 }
 
 export function cacheInvalidate(prefix) {

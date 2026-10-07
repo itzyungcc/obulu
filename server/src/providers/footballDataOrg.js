@@ -5,6 +5,8 @@
 // from kickoff elapsed and marked minuteSource "estimated".
 import config, { todayStr } from "../config.js";
 import { estimateMinute } from "../model/livePredict.js";
+import { fetchWithTimeout, dedup, recordApiCall } from "../perf.js";
+import { cacheGet, cacheSet } from "../cache.js";
 
 export const name = "football-data.org";
 export const sampleData = false;
@@ -36,9 +38,39 @@ async function req(path, params = {}) {
   for (const [k, v] of Object.entries(params)) {
     if (v !== undefined && v !== null && v !== "") url.searchParams.set(k, String(v));
   }
-  const res = await fetch(url, { headers: { "X-Auth-Token": config.footballDataOrgKey } });
-  if (!res.ok) throw new Error(`football-data.org request failed with status ${res.status}`);
-  return res.json();
+  // Timeout + one retry: a hanging upstream must never hang our request.
+  const t0 = Date.now();
+  try {
+    const { res } = await fetchWithTimeout(
+      url,
+      { headers: { "X-Auth-Token": config.footballDataOrgKey } },
+      { timeoutMs: 20000, retries: 1, retryDelayMs: 1500 }
+    );
+    if (!res.ok) throw new Error(`football-data.org request failed with status ${res.status}`);
+    const json = await res.json();
+    recordApiCall(Date.now() - t0, true);
+    return json;
+  } catch (e) {
+    recordApiCall(Date.now() - t0, false);
+    throw e;
+  }
+}
+
+// Run async fn over items with at most `limit` in flight at once.
+// Preserves input order in the results array.
+async function mapConcurrent(items, limit, fn) {
+  const results = new Array(items.length);
+  let next = 0;
+  async function worker() {
+    while (next < items.length) {
+      const i = next++;
+      results[i] = await fn(items[i], i);
+    }
+  }
+  const workers = [];
+  for (let w = 0; w < Math.min(limit, items.length); w++) workers.push(worker());
+  await Promise.all(workers);
+  return results;
 }
 
 function mapStatus(s) {
@@ -145,17 +177,26 @@ export async function getUpcomingFixtures({ league, date, team } = {}) {
     matches = json.matches || [];
   } else {
     // No league/team scope: pull scheduled matches from all free-tier
-    // (TIER_ONE) competitions. Best effort per competition.
-    for (const cid of TIER_ONE_IDS) {
-      try {
-        const json = await req(`/competitions/${cid}/matches`, {
-          dateFrom: todayStr(0),
-          dateTo: todayStr(7),
-          status: "SCHEDULED",
-        });
-        matches.push(...(json.matches || []));
-      } catch { /* best effort per competition */ }
-    }
+    // (TIER_ONE) competitions. Fetched concurrently (3 at a time) through
+    // the shared rate limiter — the old sequential loop took 10x longer.
+    // Best effort per competition.
+    const results = await mapConcurrent(
+      TIER_ONE_IDS,
+      3,
+      async (cid) => {
+        try {
+          const json = await req(`/competitions/${cid}/matches`, {
+            dateFrom: todayStr(0),
+            dateTo: todayStr(7),
+            status: "SCHEDULED",
+          });
+          return json.matches || [];
+        } catch {
+          return [];
+        }
+      }
+    );
+    for (const arr of results) matches.push(...arr);
   }
   let list = matches.map(mapFixture).filter((f) => f.status === "NS" || f.status === "LIVE");
   if (date) list = list.filter((f) => f.kickoff.slice(0, 10) === date);
@@ -257,12 +298,29 @@ export async function getTeamStats(teamId, leagueId) {
   const stats = buildStats(teamId, matches);
   if (leagueId) {
     try {
-      const st = await getStandings(leagueId);
+      // Standings are cached + deduped: home and away lookups for the same
+      // league share one API call instead of two.
+      const st = await cachedStandings(leagueId);
       const row = st[String(teamId)];
       if (row) { stats.position = row.position; stats.points = row.points; }
     } catch { /* optional */ }
   }
   return stats;
+}
+
+// Standings change slowly: cache 6h and dedupe concurrent callers so N
+// components asking for the same league trigger exactly one API request.
+async function cachedStandings(leagueId) {
+  const key = `standings:${idOf(leagueId)}`;
+  const hit = cacheGet(key);
+  if (hit) return hit;
+  return dedup(`standings:${idOf(leagueId)}`, async () => {
+    const hit2 = cacheGet(key);
+    if (hit2) return hit2;
+    const st = await getStandings(leagueId);
+    cacheSet(key, st, "standings");
+    return st;
+  });
 }
 
 export async function getLeagueAvgs(leagueId) {

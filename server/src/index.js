@@ -29,6 +29,13 @@ app.get("/", (req, res) =>
   res.json({ ok: true, service: "obulu-api", docs: "see API.md" })
 );
 
+// Lightweight health probe for uptime monitors / keep-alive pings.
+// Responds immediately: no football API calls, no prediction math,
+// no large DB queries. (The richer /api/health also exists.)
+app.get("/health", (req, res) =>
+  res.json({ status: "ok", timestamp: new Date().toISOString() })
+);
+
 app.use("/api", apiRouter);
 app.use("/api", automationRouter);
 app.use("/api/jackpot", jackpotRouter);

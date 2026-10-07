@@ -13,12 +13,18 @@ export default function ErrorState({ error, onRetry }) {
           the server configuration and restart it, then try again.
         </p>
       )}
-      {code === "NETWORK_ERROR" && (
-        <p className="hint">
-          Make sure the API server is running (dev default:{" "}
-          <code>http://localhost:3001</code>) and reachable from this device.
-        </p>
-      )}
+      {code === "NETWORK_ERROR" &&
+        (String(message).includes("waking up") ? (
+          <p className="hint">
+            The free server sleeps when idle and can take up to a minute to
+            wake. It usually connects on its own — otherwise tap Try again.
+          </p>
+        ) : (
+          <p className="hint">
+            Make sure the API server is running (dev default:{" "}
+            <code>http://localhost:3001</code>) and reachable from this device.
+          </p>
+        ))}
       {onRetry && (
         <button className="btn btn-secondary" type="button" onClick={onRetry}>
           Try again

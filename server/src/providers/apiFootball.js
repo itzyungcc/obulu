@@ -1,6 +1,7 @@
 // API-Football provider (api-sports.io v3). API key via API_FOOTBALL_KEY env only.
 import config, { currentSeason, todayStr } from "../config.js";
 import { estimateMinute } from "../model/livePredict.js";
+import { fetchWithTimeout, recordApiCall } from "../perf.js";
 
 export const name = "api-football";
 export const sampleData = false;
@@ -12,13 +13,24 @@ async function req(path, params = {}) {
   for (const [k, v] of Object.entries(params)) {
     if (v !== undefined && v !== null && v !== "") url.searchParams.set(k, String(v));
   }
-  const res = await fetch(url, { headers: { "x-apisports-key": config.apiFootballKey } });
-  if (!res.ok) throw new Error(`API-Football request failed with status ${res.status}`);
-  const json = await res.json();
-  if (json.errors && Object.keys(json.errors).length) {
-    throw new Error(`API-Football error: ${JSON.stringify(json.errors)}`);
+  const t0 = Date.now();
+  try {
+    const { res } = await fetchWithTimeout(
+      url,
+      { headers: { "x-apisports-key": config.apiFootballKey } },
+      { timeoutMs: 20000, retries: 1, retryDelayMs: 1500 }
+    );
+    if (!res.ok) throw new Error(`API-Football request failed with status ${res.status}`);
+    const json = await res.json();
+    if (json.errors && Object.keys(json.errors).length) {
+      throw new Error(`API-Football error: ${JSON.stringify(json.errors)}`);
+    }
+    recordApiCall(Date.now() - t0, true);
+    return json.response;
+  } catch (e) {
+    recordApiCall(Date.now() - t0, false);
+    throw e;
   }
-  return json.response;
 }
 
 function mapStatus(short) {

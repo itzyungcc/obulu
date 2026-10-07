@@ -6,24 +6,34 @@
 import { getProvider } from "../providers/index.js";
 import { predictMatch, MODEL_VERSION } from "../model/poisson.js";
 import { cacheGet, cacheSet } from "../cache.js";
+import { dedup } from "../perf.js";
 import config from "../config.js";
 
 async function cachedTeamStats(provider, teamId, leagueId) {
   const key = `teamstats:${teamId}:${leagueId}`;
   const hit = cacheGet(key);
   if (hit) return hit;
-  const stats = await provider.getTeamStats(teamId, leagueId);
-  cacheSet(key, stats, "teamStats");
-  return stats;
+  // Dedup: concurrent analyses sharing a team trigger one fetch, not N.
+  return dedup(key, async () => {
+    const hit2 = cacheGet(key);
+    if (hit2) return hit2;
+    const stats = await provider.getTeamStats(teamId, leagueId);
+    cacheSet(key, stats, "teamStats");
+    return stats;
+  });
 }
 
 async function cachedLeagueAvgs(provider, leagueId) {
   const key = `leagueavgs:${leagueId}`;
   const hit = cacheGet(key);
   if (hit) return hit;
-  const avgs = await provider.getLeagueAvgs(leagueId);
-  if (avgs) cacheSet(key, avgs, "standings");
-  return avgs;
+  return dedup(key, async () => {
+    const hit2 = cacheGet(key);
+    if (hit2) return hit2;
+    const avgs = await provider.getLeagueAvgs(leagueId);
+    if (avgs) cacheSet(key, avgs, "standings");
+    return avgs;
+  });
 }
 
 export async function analyzeFixture(fixture, opts = {}) {
