@@ -6,6 +6,7 @@
 import { getProvider } from "../providers/index.js";
 import { predictMatch, MODEL_VERSION } from "../model/poisson.js";
 import { cacheGet, cacheSet } from "../cache.js";
+import config from "../config.js";
 
 async function cachedTeamStats(provider, teamId, leagueId) {
   const key = `teamstats:${teamId}:${leagueId}`;
@@ -25,7 +26,7 @@ async function cachedLeagueAvgs(provider, leagueId) {
   return avgs;
 }
 
-export async function analyzeFixture(fixture) {
+export async function analyzeFixture(fixture, opts = {}) {
   const provider = getProvider();
   if (!provider) {
     const err = new Error("PROVIDER_UNAVAILABLE");
@@ -65,8 +66,13 @@ export async function analyzeFixture(fixture) {
     /* optional */
   }
 
-  const result = predictMatch(homeStats, awayStats, leagueAvgs, null, null, {
-    oddsWeight: 0, // automation uses the pure statistical model (MODEL_ODDS_WEIGHT=1 semantics: fully model-based)
+  // Optional odds input (e.g. bookmaker 1X2 odds from SportyBet): when given,
+  // the prediction is blended with the odds-implied probabilities using the
+  // configured model odds weight. Default (no opts.odds): pure statistical
+  // model, unchanged from before.
+  const withOdds = !!opts.odds;
+  const result = predictMatch(homeStats, awayStats, leagueAvgs, null, withOdds ? opts.odds : null, {
+    oddsWeight: withOdds ? config.modelOddsWeight : 0, // automation default: pure model (MODEL_ODDS_WEIGHT=1 semantics: fully model-based)
   });
 
   // Normalize model outputs to the automation's 0-100 scales:
@@ -98,7 +104,7 @@ export async function analyzeFixture(fixture) {
       expectedHomeGoals: result.expectedGoals?.home ?? null,
       expectedAwayGoals: result.expectedGoals?.away ?? null,
       factors: result.factors || [],
-      blendedWithOdds: false,
+      blendedWithOdds: result.blendedWithOdds === true,
     },
     modelVersion: MODEL_VERSION,
   };

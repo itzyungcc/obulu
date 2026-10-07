@@ -4,6 +4,7 @@ import config from "./config.js";
 import apiRouter from "./routes/api.js";
 import automationRouter from "./routes/automation.js";
 import jackpotRouter from "./routes/jackpot.js";
+import sportybetRouter from "./routes/sportybet.js";
 import chatRouter from "./routes/chat.js";
 import calendarRouter from "./routes/calendar.js";
 import liveRouter from "./routes/live.js";
@@ -31,6 +32,7 @@ app.get("/", (req, res) =>
 app.use("/api", apiRouter);
 app.use("/api", automationRouter);
 app.use("/api/jackpot", jackpotRouter);
+app.use("/api/sportybet", sportybetRouter);
 app.use("/api/chat", chatRouter);
 app.use("/api", calendarRouter);
 app.use("/api", liveRouter);

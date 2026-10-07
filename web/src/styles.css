@@ -1808,3 +1808,97 @@ button.cal-day.selected {
   font-family: inherit;
 }
 .chat-input:focus { outline: none; border-color: #c9a227; }
+
+/* ---------- SportyBet fixture browser (Jackpot tab) ---------- */
+.sb-browser { margin: 1.25rem 0 0.5rem; }
+.sb-browser h2 { margin-bottom: 0.4rem; }
+.sb-filters { display: flex; gap: 0.6rem; margin: 0.75rem 0; flex-wrap: wrap; }
+.sb-filters input[type="text"] { flex: 1; min-width: 10rem; }
+.sb-filters select { min-width: 10rem; }
+.sb-row {
+  display: flex;
+  align-items: center;
+  gap: 0.7rem;
+  width: 100%;
+  background: #141412;
+  border: 1px solid #2a2a26;
+  border-radius: 8px;
+  padding: 0.6rem 0.8rem;
+  color: #fff;
+  cursor: pointer;
+  text-align: left;
+  margin-bottom: 0.5rem;
+  font: inherit;
+}
+.sb-row:hover { border-color: #4a4a44; }
+.sb-row.selected { border-color: #c9a227; background: #1d1c14; }
+.sb-check {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 1.3rem;
+  height: 1.3rem;
+  border: 1px solid #4a4a44;
+  border-radius: 4px;
+  color: #c9a227;
+  font-weight: 700;
+  flex-shrink: 0;
+}
+.sb-row.selected .sb-check { border-color: #c9a227; }
+.sb-main { display: flex; flex-direction: column; gap: 0.15rem; min-width: 0; }
+.sb-match { font-weight: 700; }
+.sb-match .vs { color: #c9a227; font-weight: 400; font-size: 0.85rem; margin: 0 0.35rem; }
+.sb-meta { color: #bdbdb4; font-size: 0.82rem; }
+.sb-odds { color: #c9a227; font-size: 0.85rem; font-weight: 600; }
+.sb-pager { display: flex; align-items: center; gap: 0.75rem; margin: 0.75rem 0; }
+.sb-pager .btn-small { margin-top: 0; }
+.sb-chips { display: flex; flex-wrap: wrap; gap: 0.4rem; margin: 0.75rem 0; }
+.sb-chip {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.45rem;
+  background: #1d1c14;
+  border: 1px solid #c9a227;
+  border-radius: 999px;
+  padding: 0.28rem 0.55rem 0.28rem 0.8rem;
+  font-size: 0.82rem;
+  color: #fff;
+}
+.sb-chip button {
+  background: none;
+  border: none;
+  color: #c9a227;
+  cursor: pointer;
+  font-size: 1rem;
+  line-height: 1;
+  padding: 0 0.15rem;
+}
+.sb-chip button:hover { color: #fff; }
+.sb-divider { border: none; border-top: 1px solid #2a2a26; margin: 1.5rem 0; }
+.odds-aware {
+  display: inline-block;
+  font-size: 0.7rem;
+  font-weight: 700;
+  color: #0d0d0c;
+  background: #c9a227;
+  border-radius: 4px;
+  padding: 0.1rem 0.45rem;
+  margin-left: 0.45rem;
+  white-space: nowrap;
+  vertical-align: middle;
+}
+
+/* ---------- utility classes referenced by the Jackpot page ---------- */
+.row { display: flex; align-items: center; gap: 0.75rem; flex-wrap: wrap; }
+.small { font-size: 0.82rem; }
+.btn.gold { background: var(--gold); color: #0d0d0c; }
+.btn.gold:hover { background: var(--gold-light); color: #0d0d0c; }
+.error-box {
+  background: #221210;
+  border: 1px solid #a33333;
+  color: #f2b8b8;
+  border-radius: 8px;
+  padding: 0.7rem 1rem;
+  margin: 0.75rem 0;
+  font-size: 0.9rem;
+}

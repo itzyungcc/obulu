@@ -212,6 +212,39 @@ sighting, |Δp| ≥ 3, goal/red-card change, or 10 min elapsed).
     "createdAt": "..." } ] }
 ```
 
+## SportyBet (unofficial)
+
+Events come from an **UNOFFICIAL** SportyBet upcoming-events endpoint
+(no API key; `SPORTYBET_ENABLED=false` disables it). SportyBet may change,
+rate-limit, or block it at any time — failures return a clean
+`502 SPORTYBET_UNAVAILABLE`, never fabricated events. 15-min server-side
+cache. Data is used for informational fixture listing and odds-aware model
+calibration only; no betting features (bet-slip/booking features from the
+reference repo were deliberately not ported).
+
+### GET /api/sportybet/events?q=&tournament=&page=1&limit=20
+`q` matches "home vs away" or either team name (case-insensitive);
+`tournament` is an exact match. Soonest kickoff first.
+```json
+{ "events": [ { "eventId": "...", "homeTeam": "...", "awayTeam": "...",
+    "kickoff": "...", "tournament": "...",
+    "odds": { "home": 2.1, "draw": 3.4, "away": 3.6 } } ],
+  "total": 42, "page": 1, "totalPages": 3, "cachedAt": "..." }
+```
+
+### GET /api/sportybet/tournaments
+```json
+{ "tournaments": ["England - Premier League", "..."], "cachedAt": "..." }
+```
+
+### POST /api/jackpot/analyze (eventIds variant)
+Body `{ "eventIds": ["sb-1", ...] }` (max 20). Resolves SportyBet event ids
+to teams, fuzzy-matches provider fixtures, and runs the OBULU model with the
+event's 1X2 odds. Each result carries `matched`, `oddsUsed` (true when the
+odds blend applied) and `sportyBetEventId`; unknown ids return
+`matched: false` with reason `"unknown SportyBet event"`. The
+`{ games: [{home, away}] }` pasted-fixtures variant is unchanged.
+
 ## Error codes
 
 | Status | `error` | Meaning |
@@ -219,7 +252,9 @@ sighting, |Δp| ≥ 3, goal/red-card change, or 10 min elapsed).
 | 400 | `BAD_REQUEST` | Invalid/missing query parameter |
 | 404 | `NOT_FOUND` | Unknown match id or API endpoint |
 | 502 | `PROVIDER_ERROR` | Upstream data provider request failed |
+| 502 | `SPORTYBET_UNAVAILABLE` | SportyBet unofficial endpoint failed; no fake events returned |
 | 503 | `DATA_PROVIDER_NOT_CONFIGURED` | No provider key and `SAMPLE_DATA` is not `true` |
+| 503 | `SPORTYBET_DISABLED` | `SPORTYBET_ENABLED=false` |
 
 Error body shape: `{ "error": "CODE", "message": "human-readable detail" }`.
 The 503 message is:

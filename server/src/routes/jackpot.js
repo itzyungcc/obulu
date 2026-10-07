@@ -9,6 +9,7 @@ import { getProvider } from "../providers/index.js";
 import { sameTeam, normalizeTeamName } from "../automation/normalizer.js";
 import { analyzeFixture } from "../automation/analyze.js";
 import { cacheGet, cacheSet } from "../cache.js";
+import { getCachedEvents, sportyBetEnabled } from "../sportybet/client.js";
 
 const router = express.Router();
 
@@ -38,15 +39,58 @@ export function parseJackpotLine(line) {
   return { home, away };
 }
 
-// POST /api/jackpot/analyze  { games: [{home, away}] }  (max 20)
+// POST /api/jackpot/analyze  { games: [{home, away}] }  OR  { eventIds: [...] }  (max 20)
+// The eventIds path uses SportyBet upcoming-event ids (see /api/sportybet/events)
+// and passes the event's 1X2 odds into the model so the prediction is odds-aware.
 router.post("/analyze", async (req, res) => {
   try {
-    const games = req.body?.games;
-    if (!Array.isArray(games) || games.length === 0) {
-      return res.status(400).json({ error: "Provide games: [{home, away}]" });
-    }
-    if (games.length > 20) {
-      return res.status(400).json({ error: "Maximum 20 games per request" });
+    const body = req.body || {};
+    const useEventIds = Array.isArray(body.eventIds);
+
+    // Resolve each requested game to {home, away, odds?, sportyBetEventId?}.
+    let entries;
+    if (useEventIds) {
+      const eventIds = body.eventIds;
+      if (eventIds.length === 0) {
+        return res.status(400).json({ error: "Provide eventIds: [...] or games: [{home, away}]" });
+      }
+      if (eventIds.length > 20) {
+        return res.status(400).json({ error: "Maximum 20 games per request" });
+      }
+      if (!sportyBetEnabled()) {
+        return res.status(503).json({ error: "SPORTYBET_DISABLED" });
+      }
+      let sbEvents;
+      try {
+        sbEvents = (await getCachedEvents()).events;
+      } catch (e) {
+        return res.status(502).json({ error: "SPORTYBET_UNAVAILABLE" });
+      }
+      const byId = new Map(sbEvents.map((e) => [String(e.eventId), e]));
+      entries = eventIds.map((id) => {
+        const ev = byId.get(String(id));
+        if (!ev) return { sportyBetEventId: String(id), unknown: true };
+        return {
+          home: ev.homeTeam,
+          away: ev.awayTeam,
+          odds: ev.odds || null,
+          sportyBetEventId: ev.eventId,
+        };
+      });
+    } else {
+      const games = body.games;
+      if (!Array.isArray(games) || games.length === 0) {
+        return res.status(400).json({ error: "Provide games: [{home, away}]" });
+      }
+      if (games.length > 20) {
+        return res.status(400).json({ error: "Maximum 20 games per request" });
+      }
+      entries = games.map((g) => ({
+        home: String(g.home || "").trim(),
+        away: String(g.away || "").trim(),
+        odds: null,
+        sportyBetEventId: null,
+      }));
     }
 
     const provider = getProvider();
@@ -68,11 +112,20 @@ router.post("/analyze", async (req, res) => {
     );
 
     const results = [];
-    for (const g of games) {
-      const home = String(g.home || "").trim();
-      const away = String(g.away || "").trim();
+    for (const g of entries) {
+      if (g.unknown) {
+        results.push({
+          sportyBetEventId: g.sportyBetEventId,
+          matched: false,
+          reason: "unknown SportyBet event",
+          oddsUsed: false,
+        });
+        continue;
+      }
+      const home = g.home || "";
+      const away = g.away || "";
       if (!home || !away) {
-        results.push({ home, away, matched: false, reason: "empty team name" });
+        results.push({ home, away, matched: false, reason: "empty team name", oddsUsed: false, sportyBetEventId: g.sportyBetEventId || null });
         continue;
       }
 
@@ -86,12 +139,14 @@ router.post("/analyze", async (req, res) => {
           away,
           matched: false,
           reason: "no upcoming fixture found for these teams",
+          oddsUsed: false,
+          sportyBetEventId: g.sportyBetEventId || null,
         });
         continue;
       }
 
       try {
-        const analysis = await analyzeFixture(fixture);
+        const analysis = await analyzeFixture(fixture, g.odds ? { odds: g.odds } : {});
         const p = analysis.prediction;
         const pick =
           p.predictedOutcome === "home"
@@ -117,6 +172,8 @@ router.post("/analyze", async (req, res) => {
             home: p.expectedHomeGoals,
             away: p.expectedAwayGoals,
           },
+          oddsUsed: p.blendedWithOdds === true,
+          sportyBetEventId: g.sportyBetEventId || null,
         });
       } catch (e) {
         results.push({
@@ -124,6 +181,8 @@ router.post("/analyze", async (req, res) => {
           away: fixture.away.name,
           matched: false,
           reason: `analysis failed: ${e.code || e.message}`,
+          oddsUsed: false,
+          sportyBetEventId: g.sportyBetEventId || null,
         });
       }
     }

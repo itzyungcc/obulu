@@ -97,3 +97,9 @@ export const getLiveMatch = (fixtureId) =>
   apiFetch(`/live/${encodeURIComponent(fixtureId)}`);
 export const getLiveHistory = (fixtureId) =>
   apiFetch(`/live/${encodeURIComponent(fixtureId)}/history`);
+
+// --- SportyBet fixture browser (informational, online only) -------------------
+export const getSportybetEvents = (params = {}) =>
+  apiFetch("/sportybet/events", params);
+export const getSportybetTournaments = () =>
+  apiFetch("/sportybet/tournaments");

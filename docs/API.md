@@ -25,6 +25,9 @@ Base path: `/api`. All responses are JSON. Error shape:
 | GET | `/api/live` | `{ matches: [...], count }` — live probabilities + pre-match baseline, side by side |
 | GET | `/api/live/:fixtureId` | full live state — 404 `NOT_FOUND` when not tracked |
 | GET | `/api/live/:fixtureId/history` | in-play snapshots, chronological, cap 100 |
+| GET | `/api/sportybet/events?q=&tournament=&page=&limit=` | upcoming SportyBet football events, soonest first; `q` matches "home vs away" or either team (case-insensitive), `tournament` is exact; `{ events: [{eventId, homeTeam, awayTeam, kickoff, tournament, odds}], total, page, totalPages, cachedAt }` |
+| GET | `/api/sportybet/tournaments` | distinct tournament names, sorted |
+| POST | `/api/jackpot/analyze` | `{ eventIds: [...] }` (max 20): resolves SportyBet event ids to teams, fuzzy-matches provider fixtures, runs the OBULU model with the event's 1X2 odds (`oddsUsed: true`, `sportyBetEventId` echoed per result; unknown ids return `matched: false`). The `{ games: [{home, away}] }` pasted-fixtures variant still works. |
 
 Behaviour without provider keys (and `SAMPLE_DATA` not `true`): every
 data endpoint returns **503** `{ error: "DATA_PROVIDER_NOT_CONFIGURED",
@@ -32,3 +35,19 @@ message }`. The frontend turns this into a setup hint, never fake data.
 
 With `SAMPLE_DATA=true`, responses carry `sampleData: true` and the UI
 badges them **SAMPLE DATA**. Keep this off in production.
+
+## SportyBet integration (unofficial endpoint)
+
+The `/api/sportybet/*` routes and the `eventIds` variant of
+`POST /api/jackpot/analyze` read from an **UNOFFICIAL SportyBet endpoint**
+(`https://www.sportybet.com/api/ng/factsCenter/pcUpcomingEvents`) — no API
+key. SportyBet may change, rate-limit, or block it at any time; when it
+fails the API returns a clean error (`502 SPORTYBET_UNAVAILABLE`, or `503
+SPORTYBET_DISABLED` when `SPORTYBET_ENABLED=false`) and never fabricates
+events. Responses are served from a 15-minute server-side cache.
+
+The data is used for **informational fixture listing and odds-aware model
+calibration only** — 1X2 odds extracted from the event's markets feed the
+Poisson/Dixon-Coles model's odds blend (`oddsUsed: true` in the jackpot
+result). OBULU has no betting features: the reference repo's bet-slip and
+booking-code features were deliberately **not** ported.
