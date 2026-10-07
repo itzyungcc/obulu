@@ -8,7 +8,7 @@ import { db } from "../db/database.js";
 import { analyzeFixture } from "../automation/analyze.js";
 import { sameTeam } from "../automation/normalizer.js";
 
-const MODEL_CHAIN = (process.env.GEMINI_MODEL || "gemini-2.5-flash,gemini-flash-latest")
+const MODEL_CHAIN = (process.env.GEMINI_MODEL || "gemini-flash-latest,gemini-2.5-flash")
   .split(",")
   .map((m) => m.trim())
   .filter(Boolean);
@@ -119,12 +119,16 @@ async function askGemini(systemData, history, userMessage) {
   };
   let lastErr = null;
   for (const model of MODEL_CHAIN) {
+    const ctrl = new AbortController();
+    const timer = setTimeout(() => ctrl.abort(), 45000);
     try {
       const res = await fetch(GEMINI_URL(key, model), {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify(payload),
+        signal: ctrl.signal,
       });
+      clearTimeout(timer);
       if (!res.ok) {
         const t = await res.text().catch(() => "");
         lastErr = new Error(`Gemini API error ${res.status} on ${model}: ${t.slice(0, 200)}`);
@@ -138,9 +142,10 @@ async function askGemini(systemData, history, userMessage) {
       if (!text) throw new Error("Gemini returned an empty response");
       return { text: text.trim(), model };
     } catch (e) {
-      lastErr = e;
+      clearTimeout(timer);
+      lastErr = e.name === "AbortError" ? new Error(`Gemini timed out on ${model}`) : e;
       if (e.message.includes("Gemini API error")) throw e;
-      // network error — try next model
+      // network error / timeout — try next model
     }
   }
   throw lastErr || new Error("All Gemini models failed");
