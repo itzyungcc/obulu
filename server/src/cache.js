@@ -2,6 +2,13 @@
 // TTLs are per data type, keyed by namespaced cache keys.
 import { db } from "./db/database.js";
 
+// Cache namespace version. Bump this to invalidate every cached entry at
+// once (e.g. after a provider change or if stale/wrong data was ever
+// cached). v2: flushed stale sample-provider entries that survived a
+// Render deploy on the persistent disk.
+const CACHE_VERSION = "v2:";
+const namespaced = (key) => CACHE_VERSION + key;
+
 export const CACHE_TTLS = {
   fixtures: 15 * 60, // 15 min
   teamStats: 6 * 3600, // 6 h
@@ -17,10 +24,10 @@ export const CACHE_TTLS = {
 export function cacheGet(key) {
   const row = db
     .prepare("SELECT value, expires_at FROM cache_meta WHERE key = ?")
-    .get(key);
+    .get(namespaced(key));
   if (!row) return null;
   if (Date.parse(row.expires_at) < Date.now()) {
-    db.prepare("DELETE FROM cache_meta WHERE key = ?").run(key);
+    db.prepare("DELETE FROM cache_meta WHERE key = ?").run(namespaced(key));
     return null;
   }
   try {
@@ -36,7 +43,7 @@ export function cacheSet(key, value, ttlName) {
   db.prepare(
     `INSERT INTO cache_meta (key, value, expires_at) VALUES (?, ?, ?)
      ON CONFLICT(key) DO UPDATE SET value = excluded.value, expires_at = excluded.expires_at`
-  ).run(key, JSON.stringify(value), expiresAt);
+  ).run(namespaced(key), JSON.stringify(value), expiresAt);
   // Opportunistic cleanup of expired rows.
   db.prepare("DELETE FROM cache_meta WHERE expires_at < ?").run(
     new Date().toISOString()
@@ -50,7 +57,7 @@ export function cacheSet(key, value, ttlName) {
 export function cacheGetWithMeta(key) {
   const row = db
     .prepare("SELECT value, expires_at FROM cache_meta WHERE key = ?")
-    .get(key);
+    .get(namespaced(key));
   if (!row) return null;
   let value;
   try {
@@ -66,5 +73,5 @@ export function cacheGetWithMeta(key) {
 }
 
 export function cacheInvalidate(prefix) {
-  db.prepare("DELETE FROM cache_meta WHERE key LIKE ?").run(prefix + "%");
+  db.prepare("DELETE FROM cache_meta WHERE key LIKE ?").run(namespaced(prefix) + "%");
 }
