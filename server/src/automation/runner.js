@@ -11,6 +11,9 @@ import { analyzeFixture } from "./analyze.js";
 import { qualify } from "./qualification.js";
 import { notify } from "./notifier.js";
 import { recordPredictionSnapshot } from "../calendar/snapshots.js";
+import { getCachedEvents } from "../sportybet/client.js";
+import { createBooking } from "../sportybet/booking.js";
+import { sameTeam } from "./normalizer.js";
 
 const log = (...a) => console.log("[Automation]", ...a);
 
@@ -49,6 +52,65 @@ function alertsSentToday() {
 }
 
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
+
+// SportyBet outcome ids for the 1X2 market (mirror the events fetcher).
+const OUTCOME_ID = { home: "1", draw: "2", away: "3" };
+
+// Attempt a SportyBet share-booking (slip reservation only — never a placed
+// bet) for a qualified fixture. Never throws and never breaks the run: any
+// failure is logged and the alert still goes out without a code.
+export async function maybeCreateBooking({ config, analysis, prediction, fixtureId }) {
+  if (!config.sportyBetBookingEnabled) return null;
+  try {
+    const home = analysis.match?.home?.name;
+    const away = analysis.match?.away?.name;
+    const outcomeId = OUTCOME_ID[String(prediction?.predictedOutcome || "").toLowerCase()];
+    if (!home || !away || !outcomeId) return null;
+
+    // Cached events only — never refetch uncached per fixture.
+    const { events } = await getCachedEvents();
+    const candidates = (Array.isArray(events) ? events : []).filter(
+      (e) => e && sameTeam(e.homeTeam, home) && sameTeam(e.awayTeam, away)
+    );
+    if (!candidates.length) return null;
+
+    // Prefer a same-tournament event when the fuzzy match is ambiguous.
+    let event = candidates[0];
+    if (candidates.length > 1) {
+      const league = String(analysis.match?.league?.name || "").toLowerCase();
+      const sameTourney = candidates.find((e) => {
+        const t = String(e.tournament || "").toLowerCase();
+        return t && league && (t.includes(league) || league.includes(t));
+      });
+      if (sameTourney) event = sameTourney;
+    }
+
+    if (!event.odds) {
+      log(`booking skipped: no 1X2 odds for ${home} vs ${away}`);
+      return null;
+    }
+    if (Date.parse(event.kickoffISO) <= Date.now()) {
+      log(`booking skipped: kickoff already passed for ${home} vs ${away}`);
+      return null;
+    }
+
+    const booking = await createBooking([
+      { eventId: event.eventId, marketId: "1", outcomeId },
+    ]);
+    return {
+      ...booking,
+      eventId: event.eventId,
+      homeTeam: home,
+      awayTeam: away,
+      predictedOutcome: String(prediction.predictedOutcome || "").toLowerCase(),
+    };
+  } catch (e) {
+    log(
+      `booking failed for ${analysis.match?.home?.name} vs ${analysis.match?.away?.name}: ${e.code || e.message}`
+    );
+    return null;
+  }
+}
 
 // SQLite cannot bind undefined, NaN, or objects. Sanitize numerics.
 function num(v, fallback = null) {
@@ -279,6 +341,16 @@ async function processOne({ id: runId, norm, config, counts, getAlertsToday, bum
     return;
   }
 
+  // SportyBet share-booking (slip reservation only — never a placed bet):
+  // created after the fixture qualifies; any failure is non-fatal and the
+  // alert still goes out without a code.
+  const booking = await maybeCreateBooking({
+    config,
+    analysis,
+    prediction: p,
+    fixtureId: matched.fixtureId,
+  });
+
   const results = await notify({
     config,
     payload: {
@@ -286,6 +358,7 @@ async function processOne({ id: runId, norm, config, counts, getAlertsToday, bum
       prediction: p,
       modelVersion: analysis.modelVersion,
       qualification: q,
+      booking,
     },
   });
 
@@ -309,6 +382,40 @@ async function processOne({ id: runId, norm, config, counts, getAlertsToday, bum
       results.telegram.ok ? "sent" : "failed",
       results.telegram.ok ? null : results.telegram.reason
     );
+  }
+
+  // Persist the share-booking record (one row per successful booking), linked
+  // to the in-app alert when available. Non-fatal: never breaks the run.
+  if (booking) {
+    try {
+      const alertRow = db
+        .prepare(
+          `SELECT id FROM automation_alerts
+           WHERE prediction_id = ? AND notification_type = 'in_app'
+           ORDER BY id DESC LIMIT 1`
+        )
+        .get(predictionId);
+      db.prepare(
+        `INSERT INTO sportybet_bookings
+           (alert_id, fixture_id, sportybet_event_id, home_team, away_team,
+            predicted_outcome, share_code, share_url, deadline, created_at)
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
+      ).run(
+        alertRow ? Number(alertRow.id) : null,
+        String(matched.fixtureId),
+        String(booking.eventId || ""),
+        String(booking.homeTeam || ""),
+        String(booking.awayTeam || ""),
+        String(booking.predictedOutcome || ""),
+        booking.shareCode,
+        booking.shareURL,
+        booking.deadline,
+        new Date().toISOString()
+      );
+      log(`booking recorded: ${booking.shareCode} for ${booking.homeTeam} vs ${booking.awayTeam}`);
+    } catch (e) {
+      log(`booking persistence failed (non-fatal): ${e.message}`);
+    }
   }
 
   counts.alerted++;

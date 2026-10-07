@@ -57,6 +57,25 @@ try {
   console.error("[db] calendar schema migration failed:", e.message);
 }
 
+// SportyBet share-booking records: applied as a migration on existing
+// databases (same pattern as automation-schema.sql).
+try {
+  const hasSb = db
+    .prepare(
+      "SELECT name FROM sqlite_master WHERE type='table' AND name='sportybet_bookings'"
+    )
+    .get();
+  if (!hasSb) {
+    const sbSchema = fs.readFileSync(
+      path.join(__dirname, "sportybet-schema.sql"),
+      "utf8"
+    );
+    db.exec(sbSchema);
+  }
+} catch (e) {
+  console.error("[db] sportybet schema migration failed:", e.message);
+}
+
 export { db };
 
 export function closeDb() {

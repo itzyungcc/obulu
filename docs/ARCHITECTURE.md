@@ -109,5 +109,22 @@ build, talking to the same backend. There is no separate native codebase.
 ## Non-goals (by design)
 
 - No user accounts, login, payments, or personal data collection.
-- No betting functionality of any kind.
+- No automatic wagering of any kind — see the 2026-10-07 note below.
 - No background scraping — all data comes from the configured providers.
+
+### 2026-10-07: user authorized SportyBet share-booking creation
+
+The user explicitly changed OBULU's informational-only standing rule: the
+automation agent may now create SportyBet **share bookings** (booking codes)
+for qualified alerts. Scope is deliberately narrow:
+
+- A booking code is a **slip reservation only** — no money moves, no bet is
+  placed, and nothing is ever staked automatically.
+- The user opens the code in SportyBet and reviews/stakes manually.
+- Nothing in the codebase may describe a share code as a placed bet or
+  instruct the user to bet; the Telegram block presents it as a reservation.
+- Controlled by `SPORTYBET_BOOKING_ENABLED` (default `true`); set it to
+  `false` to restore the previous no-booking behavior.
+- The unofficial booking endpoint can be rate-limited or blocked by
+  SportyBet at any time — every failure is a clean error and never produces
+  a fabricated code.

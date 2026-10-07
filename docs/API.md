@@ -47,7 +47,9 @@ SPORTYBET_DISABLED` when `SPORTYBET_ENABLED=false`) and never fabricates
 events. Responses are served from a 15-minute server-side cache.
 
 The data is used for **informational fixture listing and odds-aware model
-calibration only** — 1X2 odds extracted from the event's markets feed the
+calibration** — 1X2 odds extracted from the event's markets feed the
 Poisson/Dixon-Coles model's odds blend (`oddsUsed: true` in the jackpot
-result). OBULU has no betting features: the reference repo's bet-slip and
-booking-code features were deliberately **not** ported.
+result). Share-booking code creation was added 2026-10-07 under explicit
+user authorization: booking codes are slip reservations only (no wagering).
+The reference repo's bet-slip and selection-engine features were deliberately
+**not** ported.

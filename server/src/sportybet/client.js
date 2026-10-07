@@ -5,8 +5,9 @@
 // treat every failure as a clean error, NEVER synthesize or return fake events.
 // Fetch technique mirrors the standalone sportybet-api reference (params and
 // browser-mimicking headers) but ports only the upcoming-events fetching and
-// 1X2 odds extraction. Betting endpoints (booking, selection engine) are
-// deliberately excluded: OBULU is informational only.
+// 1X2 odds extraction. Share-booking creation (server/src/sportybet/booking.js)
+// was explicitly authorized by the user on 2026-10-07 — booking codes are slip
+// reservations only, never placed bets; nothing else betting-related is ported.
 
 import { cacheGet, cacheSet } from "../cache.js";
 
@@ -20,7 +21,7 @@ export const SPORTYBET_CACHE_KEY = "sportybet:events";
 
 const MARKET_IDS = "1,18,10,29,11,26,36,14,16,45,47,60,60100";
 
-const SPORTYBET_HEADERS = {
+export const SPORTYBET_HEADERS = {
   Accept: "application/json",
   "Content-Type": "application/json",
   "Current-Country": "NG",

@@ -115,6 +115,8 @@ origin in production if you serve them on different domains.
 | `LIVE_MAX_SNAPSHOT_GAP_MIN` | no | default `10` — persist a live snapshot at least this often per tracked fixture |
 | `LIVE_FINALIZE_MISSED_POLLS` | no | default `12` — consecutive polls a fixture may miss before finalizing (covers half-time: 12×90s ≈ 18 min grace) |
 | `CORS_ORIGIN` | recommended | your web origin, e.g. `https://obulu.example.com` |
+| `SPORTYBET_ENABLED` | no | default `true`; set `false` to disable SportyBet fixture/odds fetching (unofficial endpoint) |
+| `SPORTYBET_BOOKING_ENABLED` | no | default `true`; set `false` to disable automatic SportyBet share-booking code creation on qualified alerts — codes are slip reservations only, no money moves |
 
 ## 4a. Database ephemerality on free hosting (important)
 

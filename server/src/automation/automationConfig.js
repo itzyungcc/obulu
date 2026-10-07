@@ -62,6 +62,10 @@ export function loadAutomationConfig() {
     // Display timezone for notifications/UI (storage is always UTC).
     timezone: process.env.AUTOMATION_TIMEZONE || "Africa/Lagos",
 
+    // SportyBet share-booking creation on qualified alerts (slip reservations
+    // only — no wagering). Default true per the 2026-10-07 user authorization.
+    sportyBetBookingEnabled: bool(process.env.SPORTYBET_BOOKING_ENABLED, true),
+
     // Admin key for protected endpoints (empty = open, dev only).
     adminKey: process.env.AUTOMATION_ADMIN_KEY || "",
 
@@ -88,6 +92,7 @@ export const PUBLIC_CONFIG_KEYS = [
   "allowedOutcomes",
   "timezone",
   "ruleVersion",
+  "sportyBetBookingEnabled",
 ];
 
 // Keys allowed to be changed at runtime via PATCH /api/automation/config.
@@ -108,6 +113,7 @@ export const MUTABLE_CONFIG_KEYS = [
   "blockedLeagues",
   "allowedOutcomes",
   "timezone",
+  "sportyBetBookingEnabled",
 ];
 
 // Effective config: env vars first, then runtime overrides from the

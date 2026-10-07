@@ -13,7 +13,7 @@ function mask(s) {
   return str.length <= 8 ? "***" : str.slice(0, 4) + "***" + str.slice(-4);
 }
 
-export function formatAlertMessage({ match, prediction, modelVersion, qualification }) {
+export function formatAlertMessage({ match, prediction, modelVersion, qualification, booking }) {
   const outcomeLabel = String(prediction.predictedOutcome || "").toUpperCase();
   const lines = [
     "━━━━━━━━━━━━━━━━━━━━",
@@ -55,6 +55,15 @@ export function formatAlertMessage({ match, prediction, modelVersion, qualificat
   lines.push("");
   lines.push(`🤖 Model: poisson-dixon-coles ${modelVersion}`);
   lines.push("");
+  if (booking && booking.shareCode) {
+    // Share-booking block: a slip reservation only. Never worded as a placed
+    // bet and never instructs the user to bet.
+    lines.push(`🎫 SportyBet booking code: ${booking.shareCode}`);
+    if (booking.shareURL) lines.push(String(booking.shareURL));
+    if (booking.deadline) lines.push(`(code valid until ${formatDeadline(booking.deadline)})`);
+    lines.push("Slip reservation only — no bet was placed.");
+    lines.push("");
+  }
   lines.push("━━━━━━━━━━━━━━━━━━━━");
   lines.push("OBULU analysis only.");
   lines.push("Final decision remains with the user.");
@@ -75,6 +84,25 @@ function formatKickoff(iso) {
     });
   } catch {
     return String(iso);
+  }
+}
+
+// Booking-code deadline rendered in Africa/Lagos local time.
+function formatDeadline(v) {
+  try {
+    const d = typeof v === "number" ? new Date(v) : new Date(String(v));
+    if (!Number.isFinite(d.getTime())) return String(v);
+    return d.toLocaleString("en-GB", {
+      timeZone: "Africa/Lagos",
+      weekday: "short",
+      day: "2-digit",
+      month: "short",
+      hour: "2-digit",
+      minute: "2-digit",
+      hour12: false,
+    });
+  } catch {
+    return String(v);
   }
 }
 
