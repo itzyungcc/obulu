@@ -13,79 +13,49 @@ function mask(s) {
   return str.length <= 8 ? "***" : str.slice(0, 4) + "***" + str.slice(-4);
 }
 
-export function formatAlertMessage({ match, prediction, modelVersion, qualification }) {
-  const outcomeLabel = String(prediction.predictedOutcome || "").toUpperCase();
+// Cumulative run message: every qualified tip from the run in ONE Telegram
+// message, plus the single combined SportyBet booking code when one was
+// created. The code is a slip reservation only — never worded as a placed
+// bet and never instructs the user to bet.
+export function formatRunMessage({ games, booking }) {
+  const list = Array.isArray(games) ? games : [];
   const lines = [
     "━━━━━━━━━━━━━━━━━━━━",
-    "🔔 OBULU QUALIFIED MATCH",
+    `🔔 OBULU TIPS (${list.length} game${list.length === 1 ? "" : "s"})`,
     "━━━━━━━━━━━━━━━━━━━━",
-    "",
-    `⚽ ${match.home.name} vs ${match.away.name}`,
-    "",
-    `🏆 Competition: ${match.league?.name || match.league || "—"}`,
-    "",
-    "🧠 OBULU Prediction:",
-    outcomeLabel,
-    "",
-    "📊 Probabilities:",
-    `Home: ${prediction.homeWin.toFixed(0)}%`,
-    `Draw: ${prediction.draw.toFixed(0)}%`,
-    `Away: ${prediction.awayWin.toFixed(0)}%`,
-    "",
-    "🎯 Model confidence:",
-    `${prediction.confidence.toFixed(0)}%`,
-    "",
-    "📦 Data completeness:",
-    `${prediction.dataCompleteness.toFixed(0)}%`,
     "",
   ];
-  if (
-    Number.isFinite(prediction.expectedHomeGoals) &&
-    Number.isFinite(prediction.expectedAwayGoals)
-  ) {
-    lines.push("⚽ Expected goals:");
-    lines.push(
-      `${prediction.expectedHomeGoals.toFixed(2)} - ${prediction.expectedAwayGoals.toFixed(2)}`
-    );
-    lines.push("");
-  }
-  lines.push(`⏰ Kickoff: ${formatKickoff(match.kickoff)}`);
-  lines.push("");
-  lines.push("✅ Qualification: passed all configured criteria");
-  lines.push("");
-  lines.push(`🤖 Model: poisson-dixon-coles ${modelVersion}`);
-  lines.push("");
-  lines.push("━━━━━━━━━━━━━━━━━━━━");
-  lines.push("OBULU analysis only.");
-  lines.push("Final decision remains with the user.");
-  lines.push("━━━━━━━━━━━━━━━━━━━━");
-  return lines.join("\n");
-}
-
-// Combined slip message: one SportyBet booking code covering every
-// qualified game in the run. A slip reservation only — never worded as a
-// placed bet and never instructs the user to bet.
-export function formatSlipMessage({ games, booking }) {
-  const n = Array.isArray(games) ? games.length : 0;
-  const lines = [
-    "━━━━━━━━━━━━━━━━━━━━",
-    `🎫 OBULU COMBINED SLIP (${n} game${n === 1 ? "" : "s"})`,
-    "━━━━━━━━━━━━━━━━━━━━",
-    "",
-    `SportyBet booking code: ${booking.shareCode}`,
-  ];
-  if (booking.shareURL) lines.push(String(booking.shareURL));
-  if (booking.deadline) lines.push(`(code valid until ${formatDeadline(booking.deadline)})`);
-  lines.push("");
-  lines.push("Games on this slip:");
-  (games || []).forEach((g, i) => {
-    const pick = String(g.predictedOutcome || "").toUpperCase();
+  list.forEach((g, i) => {
+    const match = g.match || {};
+    const prediction = g.prediction || {};
+    const pick = String(prediction.predictedOutcome || "").toUpperCase();
     const pickName =
-      pick === "HOME" ? g.homeTeam : pick === "AWAY" ? g.awayTeam : "Draw";
-    lines.push(`${i + 1}. ${g.homeTeam} vs ${g.awayTeam} — ${pickName}`);
+      pick === "HOME"
+        ? match.home?.name
+        : pick === "AWAY"
+          ? match.away?.name
+          : "Draw";
+    lines.push(`${i + 1}. ⚽ ${match.home?.name} vs ${match.away?.name}`);
+    const league = match.league?.name || match.league;
+    if (league) lines.push(`   🏆 ${league}`);
+    lines.push(
+      `   🧠 Pick: ${pick} (${pickName}) · 🎯 ${Number(prediction.confidence || 0).toFixed(0)}%`
+    );
+    lines.push(
+      `   📊 ${Number(prediction.homeWin || 0).toFixed(0)}% / ${Number(prediction.draw || 0).toFixed(0)}% / ${Number(prediction.awayWin || 0).toFixed(0)}%`
+    );
+    if (match.kickoff) lines.push(`   ⏰ Kickoff: ${formatKickoff(match.kickoff)}`);
+    lines.push("");
   });
-  lines.push("");
-  lines.push("Slip reservation only — no bet was placed.");
+  lines.push("━━━━━━━━━━━━━━━━━━━━");
+  if (booking && booking.shareCode) {
+    lines.push(`🎫 SportyBet booking code: ${booking.shareCode}`);
+    if (booking.shareURL) lines.push(String(booking.shareURL));
+    if (booking.deadline) lines.push(`(code valid until ${formatDeadline(booking.deadline)})`);
+    lines.push("Slip reservation only — no bet was placed.");
+  } else {
+    lines.push("(no booking code this run)");
+  }
   lines.push("━━━━━━━━━━━━━━━━━━━━");
   lines.push("OBULU analysis only.");
   lines.push("Final decision remains with the user.");
@@ -145,11 +115,11 @@ async function sendTelegram({ botToken, chatId, text }) {
   return { ok: true, messageId: body.result?.message_id };
 }
 
-// Sends the combined slip message through all configured channels.
-// Currently Telegram-only by design (the booking code is for the user);
-// the per-game pick alerts already cover the in-app feed.
-export async function notifySlip({ config, games, booking }) {
-  const text = formatSlipMessage({ games, booking });
+// Sends the cumulative run message (all tips + the one booking code) via
+// Telegram. Telegram-only by design; the per-game details already live in
+// the in-app feed.
+export async function notifyRun({ config, games, booking }) {
+  const text = formatRunMessage({ games, booking });
   const results = {};
   results.telegram = await sendTelegram({
     botToken: config.telegramBotToken,
@@ -157,29 +127,7 @@ export async function notifySlip({ config, games, booking }) {
     text: text.replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;"),
   }).catch((e) => ({ ok: false, reason: e.message }));
   if (!results.telegram.ok && !results.telegram.skipped) {
-    log(`slip telegram send failed (token ${mask(config.telegramBotToken)}): ${results.telegram.reason}`);
+    log(`run telegram send failed (token ${mask(config.telegramBotToken)}): ${results.telegram.reason}`);
   }
-  return results;
-}
-
-// Sends through all configured channels. Returns per-channel results.
-// The caller persists alert rows; telegram failures never block in-app.
-export async function notify({ config, payload }) {
-  const text = formatAlertMessage(payload);
-  const results = {};
-
-  results.telegram = await sendTelegram({
-    botToken: config.telegramBotToken,
-    chatId: config.telegramChatId,
-    text: text.replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;"),
-  }).catch((e) => ({ ok: false, reason: e.message }));
-
-  if (!results.telegram.ok && !results.telegram.skipped) {
-    log(`telegram send failed (token ${mask(config.telegramBotToken)}): ${results.telegram.reason}`);
-  }
-
-  // In-app is always recorded by the caller as an alert row.
-  results.in_app = { ok: true };
-
   return results;
 }

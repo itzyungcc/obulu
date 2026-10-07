@@ -9,7 +9,7 @@ import {
   normalizeMatch,
 } from "../src/automation/normalizer.js";
 import { qualify } from "../src/automation/qualification.js";
-import { formatAlertMessage } from "../src/automation/notifier.js";
+import { formatRunMessage } from "../src/automation/notifier.js";
 import { loadAutomationConfig } from "../src/automation/automationConfig.js";
 
 let passed = 0;
@@ -201,31 +201,51 @@ check("qualification rejects started matches", () => {
 });
 
 // ----------------------------------------------------- notifier ---
-check("alert message labels confidence and probability separately", () => {
-  const text = formatAlertMessage({
-    match: {
-      home: { name: "Arsenal" },
-      away: { name: "Chelsea" },
-      league: { name: "Premier League" },
-      kickoff: "2026-10-10T14:00:00Z",
-    },
-    prediction: {
-      predictedOutcome: "home",
-      homeWin: 76,
-      draw: 14,
-      awayWin: 10,
-      confidence: 82,
-      dataCompleteness: 91,
-      expectedHomeGoals: 1.82,
-      expectedAwayGoals: 0.94,
-    },
-    modelVersion: "1.0.0",
-    qualification: { qualified: true },
+check("run message lists all tips cumulatively and labels confidence/probability separately", () => {
+  const text = formatRunMessage({
+    games: [
+      {
+        match: {
+          home: { name: "Arsenal" },
+          away: { name: "Chelsea" },
+          league: { name: "Premier League" },
+          kickoff: "2026-10-10T14:00:00Z",
+        },
+        prediction: {
+          predictedOutcome: "home",
+          homeWin: 76,
+          draw: 14,
+          awayWin: 10,
+          confidence: 82,
+          dataCompleteness: 91,
+        },
+        modelVersion: "1.0.0",
+      },
+      {
+        match: {
+          home: { name: "Inter" },
+          away: { name: "Milan" },
+          league: { name: "Serie A" },
+          kickoff: "2026-10-10T18:00:00Z",
+        },
+        prediction: {
+          predictedOutcome: "away",
+          homeWin: 20,
+          draw: 25,
+          awayWin: 55,
+          confidence: 68,
+          dataCompleteness: 84,
+        },
+        modelVersion: "1.0.0",
+      },
+    ],
+    booking: null,
   });
-  assert.ok(text.includes("OBULU QUALIFIED MATCH"));
-  assert.ok(text.includes("Arsenal vs Chelsea"));
-  assert.ok(text.includes("Model confidence"));
-  assert.ok(text.includes("Probabilities"));
+  assert.ok(text.includes("OBULU TIPS (2 games)"), "cumulative header with count");
+  assert.ok(text.includes("Arsenal vs Chelsea"), "first tip listed");
+  assert.ok(text.includes("Inter vs Milan"), "second tip listed");
+  assert.ok(text.includes("Pick: HOME (Arsenal)"), "first pick named");
+  assert.ok(text.includes("Pick: AWAY (Milan)"), "second pick named");
   assert.ok(text.includes("Final decision remains with the user"));
   // No betting language.
   for (const banned of ["guaranteed", "sure win", "100%", "fixed"]) {

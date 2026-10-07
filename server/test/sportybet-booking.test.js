@@ -18,7 +18,7 @@ process.env.SPORTYBET_ENABLED = "true";
 
 const { createBooking } = await import("../src/sportybet/booking.js");
 const { matchSportybetSelection, createCombinedSlip } = await import("../src/automation/runner.js");
-const { formatSlipMessage } = await import("../src/automation/notifier.js");
+const { formatRunMessage } = await import("../src/automation/notifier.js");
 const { SPORTYBET_CACHE_KEY } = await import("../src/sportybet/client.js");
 const { cacheSet } = await import("../src/cache.js");
 await import("../src/db/database.js"); // ensure scratch tables exist
@@ -303,13 +303,22 @@ await check("createCombinedSlip: empty selections -> null, no fetch", async () =
   assert.strictEqual(fetchCalls, 0);
 });
 
-// -------------------------------------------------- slip message ---
-await check("formatSlipMessage: lists games with picks + code, URL, deadline, slip-reservation wording", () => {
-  const text = formatSlipMessage({
+// -------------------------------------------------- run message ---
+await check("formatRunMessage: cumulative tips + code, URL, deadline, slip-reservation wording", () => {
+  const text = formatRunMessage({
     games: [
-      { homeTeam: "Arsenal", awayTeam: "Chelsea", predictedOutcome: "home" },
-      { homeTeam: "Real Madrid", awayTeam: "Barcelona", predictedOutcome: "draw" },
-      { homeTeam: "Inter", awayTeam: "Milan", predictedOutcome: "away" },
+      {
+        match: { home: { name: "Arsenal" }, away: { name: "Chelsea" }, league: { name: "Premier League" }, kickoff: FUTURE_KICKOFF },
+        prediction: { predictedOutcome: "home", homeWin: 55, draw: 25, awayWin: 20, confidence: 72 },
+      },
+      {
+        match: { home: { name: "Real Madrid" }, away: { name: "Barcelona" }, league: { name: "La Liga" }, kickoff: FUTURE_KICKOFF },
+        prediction: { predictedOutcome: "draw", homeWin: 30, draw: 40, awayWin: 30, confidence: 65 },
+      },
+      {
+        match: { home: { name: "Inter" }, away: { name: "Milan" }, league: { name: "Serie A" }, kickoff: FUTURE_KICKOFF },
+        prediction: { predictedOutcome: "away", homeWin: 20, draw: 25, awayWin: 55, confidence: 70 },
+      },
     ],
     booking: {
       shareCode: "WGB4BE",
@@ -317,15 +326,32 @@ await check("formatSlipMessage: lists games with picks + code, URL, deadline, sl
       deadline: "2026-10-10T17:30:00.000Z",
     },
   });
-  assert.ok(text.includes("COMBINED SLIP (3 games)"), "slip header with game count");
-  assert.ok(text.includes("1. Arsenal vs Chelsea — Arsenal"), "home pick named");
-  assert.ok(text.includes("2. Real Madrid vs Barcelona — Draw"), "draw pick named");
-  assert.ok(text.includes("3. Inter vs Milan — Milan"), "away pick named");
-  assert.ok(text.includes("SportyBet booking code: WGB4BE"), "code line present");
+  assert.ok(text.includes("OBULU TIPS (3 games)"), "cumulative header with game count");
+  assert.ok(text.includes("1. ⚽ Arsenal vs Chelsea"), "game 1 listed");
+  assert.ok(text.includes("Pick: HOME (Arsenal)"), "home pick named");
+  assert.ok(text.includes("Pick: DRAW (Draw)"), "draw pick named");
+  assert.ok(text.includes("Pick: AWAY (Milan)"), "away pick named");
+  assert.ok(text.includes("🎫 SportyBet booking code: WGB4BE"), "single code line present");
   assert.ok(text.includes("https://www.sportybet.com/ng/share/WGB4BE"), "URL line present");
   assert.ok(text.includes("code valid until"), "deadline line present");
   assert.ok(text.includes("Slip reservation only — no bet was placed."), "slip-reservation wording");
   assert.ok(!text.toLowerCase().includes("bet now"), "no betting call to action");
+});
+
+await check("formatRunMessage: tips still sent when booking is null (failed booking is non-fatal)", () => {
+  const text = formatRunMessage({
+    games: [
+      {
+        match: { home: { name: "Arsenal" }, away: { name: "Chelsea" }, kickoff: FUTURE_KICKOFF },
+        prediction: { predictedOutcome: "home", homeWin: 55, draw: 25, awayWin: 20, confidence: 72 },
+      },
+    ],
+    booking: null,
+  });
+  assert.ok(text.includes("OBULU TIPS (1 game)"), "tips still listed");
+  assert.ok(text.includes("Arsenal vs Chelsea"), "tip content present");
+  assert.ok(!text.includes("WGB4BE"), "no fabricated code on failure");
+  assert.ok(text.includes("(no booking code this run)"), "honest fallback line");
 });
 
 globalThis.fetch = realFetch;

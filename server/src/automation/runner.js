@@ -9,7 +9,7 @@ import { collectUpcoming } from "./collector.js";
 import { matchFixture } from "./fixtureMatcher.js";
 import { analyzeFixture } from "./analyze.js";
 import { qualify } from "./qualification.js";
-import { notify, notifySlip } from "./notifier.js";
+import { notifyRun } from "./notifier.js";
 import { recordPredictionSnapshot } from "../calendar/snapshots.js";
 import { getCachedEvents } from "../sportybet/client.js";
 import { createBooking } from "../sportybet/booking.js";
@@ -180,10 +180,11 @@ export async function runAutomation({ manual = false, overrides = {} } = {}) {
 
     let alertsToday = alertsSentToday();
     const slipSelections = [];
+    const tippedGames = [];
 
     for (const norm of batch) {
       try {
-        await processOne({ id, norm, config, counts, getAlertsToday: () => alertsToday, bumpAlerts: () => alertsToday++, slipSelections });
+        await processOne({ id, norm, config, counts, getAlertsToday: () => alertsToday, bumpAlerts: () => alertsToday++, slipSelections, tippedGames });
       } catch (e) {
         counts.errors++;
         log(`run ${id}: match ${norm.homeTeam} vs ${norm.awayTeam} failed: ${e.code || e.message}`);
@@ -192,14 +193,23 @@ export async function runAutomation({ manual = false, overrides = {} } = {}) {
       await sleep(1500);
     }
 
-    // ---- Combined SportyBet slip: one booking code for every qualified
-    // game in this run (slip reservation only — never a placed bet).
-    // Non-fatal: a booking failure never fails the run.
-    if (!dryRun && slipSelections.length > 0) {
+    // ---- Cumulative Telegram send: ONE message for the whole run with all
+    // tips, plus ONE combined SportyBet booking code when at least one game
+    // could be matched (slip reservation only — never a placed bet).
+    // Non-fatal: a booking or send failure never fails the run.
+    if (!dryRun && tippedGames.length > 0) {
       try {
-        await createCombinedSlip({ id, config, selections: slipSelections });
+        const booking = await createCombinedSlip({ id, config, selections: slipSelections });
+        const results = await notifyRun({ config, games: tippedGames, booking }).catch((e) => ({
+          telegram: { ok: false, reason: e.message },
+        }));
+        log(
+          `run ${id}: cumulative telegram sent (${tippedGames.length} tips` +
+            `${booking ? `, slip ${booking.shareCode}` : ", no slip code"}` +
+            `), telegram=${results.telegram && results.telegram.ok ? "sent" : "failed/skipped"}`
+        );
       } catch (e) {
-        log(`run ${id}: combined slip failed (non-fatal): ${e.message}`);
+        log(`run ${id}: cumulative send failed (non-fatal): ${e.message}`);
       }
     }
 
@@ -217,7 +227,7 @@ export async function runAutomation({ manual = false, overrides = {} } = {}) {
   }
 }
 
-async function processOne({ id: runId, norm, config, counts, getAlertsToday, bumpAlerts, slipSelections }) {
+async function processOne({ id: runId, norm, config, counts, getAlertsToday, bumpAlerts, slipSelections, tippedGames }) {
   // ---- Match ----
   const matched = await matchFixture(norm);
   const matchRow = db
@@ -350,14 +360,15 @@ async function processOne({ id: runId, norm, config, counts, getAlertsToday, bum
   }
 
   // ---- Notify ----
+  // Telegram is cumulative: this fixture's tip is collected and sent as
+  // ONE message for the whole run (sendRunSummary), after the loop.
   if (config.dryRun) {
     log(`[dry-run] would alert: ${analysis.match.home.name} vs ${analysis.match.away.name} (${p.predictedOutcome}, conf ${p.confidence.toFixed(0)})`);
     return;
   }
 
   // SportyBet slip selection: collected across the run and combined into
-  // ONE booking code at the end of the run (createCombinedSlip). The alert
-  // goes out immediately without a code; the slip message follows the run.
+  // ONE booking code at the end of the run (createCombinedSlip).
   const selection = await matchSportybetSelection({
     config,
     analysis,
@@ -366,14 +377,12 @@ async function processOne({ id: runId, norm, config, counts, getAlertsToday, bum
   });
   if (selection) slipSelections.push(selection);
 
-  const results = await notify({
-    config,
-    payload: {
-      match: analysis.match,
-      prediction: p,
-      modelVersion: analysis.modelVersion,
-      qualification: q,
-    },
+  // Collect this game's tip for the cumulative run message.
+  tippedGames.push({
+    match: analysis.match,
+    prediction: p,
+    modelVersion: analysis.modelVersion,
+    selection: selection || null,
   });
 
   const now = new Date().toISOString();
@@ -384,23 +393,9 @@ async function processOne({ id: runId, norm, config, counts, getAlertsToday, bum
      VALUES (?, ?, 'in_app', ?, 'sent', NULL)`
   ).run(predictionId, config.ruleVersion, now);
 
-  if (results.telegram && !results.telegram.skipped) {
-    db.prepare(
-      `INSERT OR IGNORE INTO automation_alerts
-         (prediction_id, rule_version, notification_type, sent_at, status, error)
-       VALUES (?, ?, 'telegram', ?, ?, ?)`
-    ).run(
-      predictionId,
-      config.ruleVersion,
-      now,
-      results.telegram.ok ? "sent" : "failed",
-      results.telegram.ok ? null : results.telegram.reason
-    );
-  }
-
   counts.alerted++;
   bumpAlerts();
-  log(`alert sent: ${analysis.match.home.name} vs ${analysis.match.away.name}`);
+  log(`tip collected: ${analysis.match.home.name} vs ${analysis.match.away.name}`);
   } catch (e) {
     // Catch-all for any failure in the post-match pipeline stages.
     const detail = `${e.code || e.name}: ${e.message}\n${(e.stack || "").split("\n").slice(1, 4).join("\n")}`;
@@ -411,9 +406,10 @@ async function processOne({ id: runId, norm, config, counts, getAlertsToday, bum
 
 // Create ONE combined SportyBet share-booking for every qualified game in
 // the run (slip reservation only — never a placed bet). Persists one
-// sportybet_bookings row per fixture sharing the code, then sends a single
-// combined slip message to Telegram. Never throws: any failure is logged
-// and the run is unaffected (the per-game pick alerts already went out).
+// sportybet_bookings row per fixture sharing the code and returns the
+// booking (or null). Never throws: any failure is logged and the run is
+// unaffected. The cumulative Telegram message is sent separately by the
+// caller via notifyRun.
 export async function createCombinedSlip({ id: runId, config, selections }) {
   if (!config.sportyBetBookingEnabled) {
     log(`run ${runId}: combined slip disabled, skipping`);
@@ -470,13 +466,7 @@ export async function createCombinedSlip({ id: runId, config, selections }) {
     }
   }
 
-  const results = await notifySlip({ config, games: items, booking }).catch((e) => ({
-    telegram: { ok: false, reason: e.message },
-  }));
-  log(
-    `run ${runId}: combined slip ${booking.shareCode} (${items.length} games), ` +
-      `telegram=${results.telegram && results.telegram.ok ? "sent" : "failed/skipped"}`
-  );
+  log(`run ${runId}: combined slip ${booking.shareCode} (${items.length} games) recorded`);
   return booking;
 }
 
