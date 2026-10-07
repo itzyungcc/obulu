@@ -8,9 +8,12 @@ import { db } from "../db/database.js";
 import { analyzeFixture } from "../automation/analyze.js";
 import { sameTeam } from "../automation/normalizer.js";
 
-const GEMINI_MODEL = process.env.GEMINI_MODEL || "gemini-2.0-flash";
-const GEMINI_URL = (key) =>
-  `https://generativelanguage.googleapis.com/v1beta/models/${GEMINI_MODEL}:generateContent?key=${key}`;
+const MODEL_CHAIN = (process.env.GEMINI_MODEL || "gemini-2.5-flash,gemini-flash-latest")
+  .split(",")
+  .map((m) => m.trim())
+  .filter(Boolean);
+const GEMINI_URL = (key, model) =>
+  `https://generativelanguage.googleapis.com/v1beta/models/${model}:generateContent?key=${key}`;
 
 export function chatConfigured() {
   return Boolean(process.env.GEMINI_API_KEY);
@@ -109,24 +112,38 @@ async function askGemini(systemData, history, userMessage) {
     })),
     { role: "user", parts: [{ text: userMessage }] },
   ];
-  const res = await fetch(GEMINI_URL(key), {
-    method: "POST",
-    headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({
-      system_instruction: { parts: [{ text: SYSTEM_PROMPT + systemData }] },
-      contents,
-      generationConfig: { maxOutputTokens: 400, temperature: 0.4 },
-    }),
-  });
-  if (!res.ok) {
-    const t = await res.text().catch(() => "");
-    throw new Error(`Gemini API error ${res.status}: ${t.slice(0, 200)}`);
+  const payload = {
+    system_instruction: { parts: [{ text: SYSTEM_PROMPT + systemData }] },
+    contents,
+    generationConfig: { maxOutputTokens: 400, temperature: 0.4 },
+  };
+  let lastErr = null;
+  for (const model of MODEL_CHAIN) {
+    try {
+      const res = await fetch(GEMINI_URL(key, model), {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(payload),
+      });
+      if (!res.ok) {
+        const t = await res.text().catch(() => "");
+        lastErr = new Error(`Gemini API error ${res.status} on ${model}: ${t.slice(0, 200)}`);
+        // Only fall through on model-not-found / bad-request; auth/quota errors won't fix themselves.
+        if (res.status === 404 || res.status === 400) continue;
+        throw lastErr;
+      }
+      const json = await res.json();
+      const text =
+        json.candidates?.[0]?.content?.parts?.map((p) => p.text || "").join("") || "";
+      if (!text) throw new Error("Gemini returned an empty response");
+      return { text: text.trim(), model };
+    } catch (e) {
+      lastErr = e;
+      if (e.message.includes("Gemini API error")) throw e;
+      // network error — try next model
+    }
   }
-  const json = await res.json();
-  const text =
-    json.candidates?.[0]?.content?.parts?.map((p) => p.text || "").join("") || "";
-  if (!text) throw new Error("Gemini returned an empty response");
-  return text.trim();
+  throw lastErr || new Error("All Gemini models failed");
 }
 
 // --- Public API ---
@@ -177,6 +194,6 @@ export async function chatReply({ message, history = [], ip }) {
     automation,
   ].join("\n");
 
-  const reply = await askGemini(systemData, history, text);
-  return { reply, model: GEMINI_MODEL };
+  const { text: reply, model } = await askGemini(systemData, history, text);
+  return { reply, model };
 }
