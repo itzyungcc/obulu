@@ -27,7 +27,7 @@ export async function createBooking(selections) {
   if (!items.length) {
     throw new Error("createBooking: selections are required");
   }
-  const invalid = items.find((s) => !s || !s.eventId || !s.marketId || !s.outcomeId);
+  const invalid = items.some((s) => !s || !s.eventId || !s.marketId || !s.outcomeId);
   if (invalid) {
     throw new Error(
       "createBooking: each selection requires eventId, marketId and outcomeId"

@@ -10,7 +10,7 @@
   "name": "obulu-server",
   "scripts": {
     "start": "node src/index.js",
-    "test": "node test/model.test.js && node test/automation.test.js && node test/calendar.test.js && node test/live.test.js && node test/sportybet.test.js"
+    "test": "node test/model.test.js && node test/automation.test.js && node test/calendar.test.js && node test/live.test.js && node test/sportybet.test.js && node test/sportybet-booking.test.js"
   },
   "type": "module",
   "version": "1.0.0"
