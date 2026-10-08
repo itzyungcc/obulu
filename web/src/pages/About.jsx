@@ -1,4 +1,15 @@
+import { useEffect } from "react";
+import { useLocation } from "react-router-dom";
+
 export default function About() {
+  const { hash } = useLocation();
+  useEffect(() => {
+    if (hash) {
+      const el = document.querySelector(hash);
+      if (el) el.scrollIntoView({ behavior: "smooth", block: "start" });
+    }
+  }, [hash]);
+
   return (
     <div className="container page">
       <h1>About OBULU</h1>
@@ -50,15 +61,16 @@ export default function About() {
         <p className="disclaimer">Predictions are statistical estimates based on available data and are not guarantees of match results.</p>
       </section>
 
-      <section className="card" aria-labelledby="data-heading">
+      <section className="card" id="data" aria-labelledby="data-heading">
         <h2 id="data-heading">Data sources</h2>
         <p>
-          This build ships with real 2024/25 season data for the Premier
-          League, La Liga, Serie A, Bundesliga and Ligue 1 — 98 clubs,
-          1,756 matches — bundled on-device, so every comparison and
-          prediction runs on genuine results. (The free API-Football plan
-          only covers seasons up to 2024, so the current season is not
-          included.)
+          OBULU's live platform is powered by football-data.org, covering
+          ten competitions: the Premier League, La Liga, Serie A,
+          Bundesliga, Ligue 1, UEFA Champions League, Championship,
+          Eredivisie, Primeira Liga and Brazil's Série A. Fixtures, results,
+          standings and team statistics are refreshed continuously, and
+          predictions are always computed from this live data — never
+          fabricated.
         </p>
       </section>
 

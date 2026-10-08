@@ -3,28 +3,31 @@ import { Link } from "react-router-dom";
 export default function Footer() {
   return (
     <footer className="site-footer">
-      <div className="container footer-inner">
-        <p className="footer-brand">
-          <strong>OBULU</strong> — Football
-          Comparison &amp; Prediction
-        </p>
-        <p className="footer-note">
-          Created by Chiakwa Peter —{" "}
-          <a href="mailto:chiakwapeter@gmail.com">chiakwapeter@gmail.com</a>
-        </p>
-        <p className="footer-note">
-          Predictions are statistical estimates for informational purposes only.
-        </p>
-        <p className="footer-note footer-emph">
-          Informational tool only — not a betting platform.
-        </p>
-        <nav className="footer-nav" aria-label="Footer">
-          <Link to="/about">About OBULU</Link>
-          <span aria-hidden="true"> · </span>
-          <Link to="/upcoming">Upcoming Matches</Link>
-          <span aria-hidden="true"> · </span>
-          <Link to="/leagues">Leagues</Link>
+      <div className="container footer-grid">
+        <div className="footer-brand-col">
+          <p className="footer-logo">OBULU</p>
+          <p className="footer-tagline">
+            Football intelligence powered by statistical analysis and
+            football data.
+          </p>
+        </div>
+        <nav className="footer-col" aria-label="Product">
+          <p className="footer-heading">Product</p>
+          <Link to="/upcoming">Predictions</Link>
+          <Link to="/search">Match Analysis</Link>
+          <Link to="/calendar">Prediction Calendar</Link>
+          <Link to="/live">Live Prediction Engine</Link>
         </nav>
+        <nav className="footer-col" aria-label="Information">
+          <p className="footer-heading">Information</p>
+          <Link to="/about">About OBULU</Link>
+          <Link to="/methodology">Methodology</Link>
+          <Link to="/about#data">Data Sources</Link>
+          <Link to="/disclaimer">Disclaimer</Link>
+        </nav>
+      </div>
+      <div className="container footer-bottom">
+        <p>© 2026 OBULU. All rights reserved.</p>
       </div>
     </footer>
   );

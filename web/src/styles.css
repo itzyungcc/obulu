@@ -242,34 +242,67 @@ img {
   background: #0a0a09;
   border-top: 1px solid var(--gold-dark);
   color: #ffffff;
-  padding: 2rem 0;
+  padding: 2.5rem 0 0;
   position: relative;
   z-index: 1;
 }
-.footer-inner p {
-  margin: 0 0 0.4em;
+.footer-grid {
+  display: grid;
+  grid-template-columns: 1.4fr 1fr 1fr;
+  gap: 2rem;
+  padding-bottom: 2rem;
 }
-.footer-note {
-  font-size: 0.9rem;
-  color: #ffffff;
+.footer-logo {
+  font-size: 1.4rem;
+  font-weight: 800;
+  letter-spacing: 0.12em;
+  color: var(--gold);
+  margin: 0 0 0.5rem;
 }
-.footer-note a {
-  color: var(--white);
+.footer-tagline {
+  font-size: 0.92rem;
+  line-height: 1.55;
+  color: rgba(255, 255, 255, 0.72);
+  margin: 0;
+  max-width: 26rem;
 }
-.footer-emph {
-  color: var(--white);
-  margin-top: 0.6em;
+.footer-heading {
+  font-size: 0.78rem;
+  font-weight: 700;
+  letter-spacing: 0.14em;
+  text-transform: uppercase;
+  color: var(--gold);
+  margin: 0 0 0.9rem;
 }
-.footer-nav {
-  margin-top: 1rem;
+.footer-col {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
 }
-.footer-nav a {
-  color: var(--white);
-  font-weight: 600;
+.footer-col a {
+  color: rgba(255, 255, 255, 0.82);
+  text-decoration: none;
+  font-size: 0.92rem;
+  padding: 0.28rem 0;
+  transition: color 0.15s ease;
 }
-.footer-nav span {
-  color: #ffffff;
-  margin: 0 0.25rem;
+.footer-col a:hover {
+  color: var(--gold-light);
+}
+.footer-bottom {
+  border-top: 1px solid rgba(201, 162, 39, 0.22);
+  padding: 1.1rem 0 1.4rem;
+}
+.footer-bottom p {
+  margin: 0;
+  font-size: 0.82rem;
+  color: rgba(255, 255, 255, 0.55);
+}
+@media (max-width: 640px) {
+  .footer-grid {
+    grid-template-columns: 1fr;
+    gap: 1.6rem;
+  }
 }
 
 /* ---------- cards / buttons / badges ---------- */

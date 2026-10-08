@@ -10,6 +10,8 @@ import MatchAnalysis from "./pages/MatchAnalysis.jsx";
 import Calendar from "./pages/Calendar.jsx";
 import Live from "./pages/Live.jsx";
 import About from "./pages/About.jsx";
+import Methodology from "./pages/Methodology.jsx";
+import Disclaimer from "./pages/Disclaimer.jsx";
 import Automation from "./pages/Automation.jsx";
 import Jackpot from "./pages/Jackpot.jsx";
 import Chat from "./pages/Chat.jsx";
@@ -37,6 +39,8 @@ export default function App() {
           <Route path="/calendar" element={<Calendar />} />
           <Route path="/live" element={<Live />} />
           <Route path="/about" element={<About />} />
+          <Route path="/methodology" element={<Methodology />} />
+          <Route path="/disclaimer" element={<Disclaimer />} />
           <Route path="/automation" element={<Automation />} />
           <Route path="/jackpot" element={<Jackpot />} />
           <Route path="/chat" element={<Chat />} />
