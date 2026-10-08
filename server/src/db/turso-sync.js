@@ -52,6 +52,24 @@ let intervalTimer = null;
 let pushing = false;
 let pushQueued = false;
 let pulledOk = false; // true once a boot pull has completed without error
+let lastPullAt = null;
+let lastPullRows = 0;
+let lastPullError = null;
+let lastPushAt = null;
+let lastPushError = null;
+
+// Observable sync state (safe for /api/health: no credentials).
+export function syncStatus() {
+  return {
+    enabled: isEnabled(),
+    pulledOk,
+    lastPullAt,
+    lastPullRows,
+    lastPullError,
+    lastPushAt,
+    lastPushError,
+  };
+}
 
 export function isEnabled() {
   return Boolean(
@@ -137,10 +155,31 @@ async function ensureRemoteSchema() {
 }
 
 // Pull every durable table from Turso into the local DB. Runs once at boot.
-export async function pullOnBoot(db) {
+// Retries a few times: container boot is the likeliest moment for a
+// transient network/DNS blip, and a failed pull must not silently persist.
+export async function pullOnBoot(db, maxAttempts = 3) {
   if (!isEnabled()) return;
-  try {
-    await ensureRemoteSchema();
+  for (let attempt = 1; attempt <= maxAttempts; attempt++) {
+    try {
+      await pullOnce(db);
+      return;
+    } catch (e) {
+      lastPullAt = new Date().toISOString();
+      lastPullError = e.message;
+      console.error(
+        `[turso] boot pull attempt ${attempt}/${maxAttempts} failed:`,
+        e.message
+      );
+      if (attempt < maxAttempts) await sleep(5000 * attempt);
+    }
+  }
+  console.error("[turso] boot pull failed (continuing with local DB)");
+}
+
+const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
+
+async function pullOnce(db) {
+  await ensureRemoteSchema();
     const client = await getClient();
     const have = localTables(db);
     let total = 0;
@@ -172,10 +211,9 @@ export async function pullOnBoot(db) {
     }
     console.log(`[turso] boot pull complete: ${total} rows restored`);
     pulledOk = true;
-  } catch (e) {
-    // Never break boot because the cloud backup is unreachable.
-    console.error("[turso] boot pull failed (continuing with local DB):", e.message);
-  }
+    lastPullAt = new Date().toISOString();
+    lastPullRows = total;
+    lastPullError = null;
 }
 
 // Push durable tables to Turso. Tables omitted from `only` are skipped.
@@ -221,7 +259,11 @@ export async function pushToTurso(db, only = null) {
       }
     }
     console.log("[turso] push complete");
+    lastPushAt = new Date().toISOString();
+    lastPushError = null;
   } catch (e) {
+    lastPushAt = new Date().toISOString();
+    lastPushError = e.message;
     console.error("[turso] push failed (will retry on next trigger):", e.message);
   } finally {
     pushing = false;

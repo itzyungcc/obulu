@@ -64,7 +64,7 @@ router.get(
         odds: oddsEnabled(),
       },
       timestamp: new Date().toISOString(),
-      tursoBackup: tursoSync.isEnabled(),
+      tursoBackup: tursoSync.syncStatus(),
     });
   })
 );
