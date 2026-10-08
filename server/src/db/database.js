@@ -81,3 +81,11 @@ export { db };
 export function closeDb() {
   db.close();
 }
+
+// Turso cloud backup (free tier): on boot, restore durable tables from the
+// cloud copy (fresh Render disks start empty); then push periodically.
+// Both are no-ops unless TURSO_DATABASE_URL + TURSO_AUTH_TOKEN are set,
+// so local dev and the test suite are unaffected.
+const { pullOnBoot, startPeriodicPush } = await import("./turso-sync.js");
+await pullOnBoot(db);
+startPeriodicPush(db);

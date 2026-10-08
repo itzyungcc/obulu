@@ -1,0 +1,247 @@
+// Turso cloud sync — keeps durable tables backed up to a free Turso
+// (cloud SQLite) database so Render's ephemeral disk wipes on redeploy
+// don't lose prediction history, calendar snapshots, or booking records.
+//
+// Design notes:
+// - Local node:sqlite stays the live database: zero changes to the 50+
+//   existing sync query call sites, zero per-request network latency.
+// - Only DURABLE_TABLES are synced. High-churn rebuildable tables
+//   (cache_meta, team_stats_cache, live_matches) stay local-only.
+// - Pull runs once at boot (fresh Render disks restore from Turso).
+// - Push is debounced after writes, plus every 15 min, plus on shutdown.
+// - Single-writer assumption: one Render instance. Last push wins.
+
+import fs from "node:fs";
+import path from "node:path";
+import { fileURLToPath } from "node:url";
+
+const __dirname = path.dirname(fileURLToPath(import.meta.url));
+
+// Tables whose rows must survive a redeploy. Everything else (HTTP cache,
+// team-stats cache, live-engine scratch state) rebuilds itself.
+const DURABLE_TABLES = [
+  "prediction_snapshots",
+  "predictions",
+  "automation_runs",
+  "automation_alerts",
+  "automation_matches",
+  "automation_predictions",
+  "automation_results",
+  "automation_config",
+  "sportybet_bookings",
+  "fixtures",
+  "leagues",
+  "teams",
+  "results",
+];
+
+const SCHEMA_FILES = [
+  "schema.sql",
+  "automation-schema.sql",
+  "calendar-schema.sql",
+  "sportybet-schema.sql",
+];
+
+const PUSH_DEBOUNCE_MS = 30_000;
+const PUSH_INTERVAL_MS = 15 * 60_000;
+const BATCH_CHUNK = 400;
+
+let turso = null; // @libsql/client instance (remote only)
+let pushTimer = null;
+let intervalTimer = null;
+let pushing = false;
+let pushQueued = false;
+
+export function isEnabled() {
+  return Boolean(
+    process.env.TURSO_DATABASE_URL && process.env.TURSO_AUTH_TOKEN
+  );
+}
+
+async function getClient() {
+  if (turso) return turso;
+  const { createClient } = await import("@libsql/client");
+  turso = createClient({
+    url: process.env.TURSO_DATABASE_URL,
+    authToken: process.env.TURSO_AUTH_TOKEN,
+  });
+  return turso;
+}
+
+function localTables(db) {
+  try {
+    return new Set(
+      db
+        .prepare("SELECT name FROM sqlite_master WHERE type='table'")
+        .all()
+        .map((r) => r.name)
+    );
+  } catch {
+    return new Set();
+  }
+}
+
+function tableColumns(db, table) {
+  return db
+    .prepare(`PRAGMA table_info("${table}")`)
+    .all()
+    .map((c) => c.name);
+}
+
+async function remoteTables(client) {
+  const rs = await client.execute(
+    "SELECT name FROM sqlite_master WHERE type='table'"
+  );
+  return new Set(rs.rows.map((r) => r.name));
+}
+
+// Strip -- line comments (respecting quoted strings), then split into
+// individual statements. The schema files are simple DDL.
+function splitStatements(sql) {
+  const noComments = sql
+    .split("\n")
+    .map((line) => {
+      let out = "";
+      let inStr = false;
+      for (let i = 0; i < line.length; i++) {
+        const ch = line[i];
+        if (ch === "'") inStr = !inStr;
+        if (!inStr && ch === "-" && line[i + 1] === "-") break;
+        out += ch;
+      }
+      return out;
+    })
+    .join("\n");
+  return noComments
+    .split(";")
+    .map((s) => s.trim())
+    .filter(Boolean);
+}
+async function ensureRemoteSchema() {
+  const client = await getClient();
+  const existing = await remoteTables(client);
+  const missing = DURABLE_TABLES.filter((t) => !existing.has(t));
+  if (missing.length === 0) return;
+  const statements = [];
+  for (const file of SCHEMA_FILES) {
+    const sql = fs.readFileSync(path.join(__dirname, file), "utf8");
+    for (const stmt of splitStatements(sql)) {
+      statements.push({ sql: stmt });
+    }
+  }
+  if (statements.length) {
+    await client.batch(statements);
+    console.log(`[turso] created remote schema (${missing.length} tables)`);
+  }
+}
+
+// Pull every durable table from Turso into the local DB. Runs once at boot.
+export async function pullOnBoot(db) {
+  if (!isEnabled()) return;
+  try {
+    await ensureRemoteSchema();
+    const client = await getClient();
+    const have = localTables(db);
+    let total = 0;
+    for (const table of DURABLE_TABLES) {
+      if (!have.has(table)) continue; // local schema should already exist
+      const rs = await client.execute(`SELECT * FROM "${table}"`);
+      const rows = rs.rows;
+      if (rows.length === 0) continue;
+      const cols = tableColumns(db, table).filter((c) =>
+        Object.prototype.hasOwnProperty.call(rows[0], c)
+      );
+      if (cols.length === 0) continue;
+      const placeholders = cols.map(() => "?").join(", ");
+      const quoted = cols.map((c) => `"${c}"`).join(", ");
+      const insert = db.prepare(
+        `INSERT OR REPLACE INTO "${table}" (${quoted}) VALUES (${placeholders})`
+      );
+      const del = db.prepare(`DELETE FROM "${table}"`);
+      db.exec("BEGIN");
+      try {
+        del.run();
+        for (const row of rows) insert.run(...cols.map((c) => row[c] ?? null));
+        db.exec("COMMIT");
+      } catch (e) {
+        try { db.exec("ROLLBACK"); } catch { /* ignore */ }
+        throw e;
+      }
+      total += rows.length;
+    }
+    console.log(`[turso] boot pull complete: ${total} rows restored`);
+  } catch (e) {
+    // Never break boot because the cloud backup is unreachable.
+    console.error("[turso] boot pull failed (continuing with local DB):", e.message);
+  }
+}
+
+// Push durable tables to Turso. Tables omitted from `only` are skipped.
+export async function pushToTurso(db, only = null) {
+  if (!isEnabled() || pushing) {
+    if (!isEnabled()) return;
+    pushQueued = true;
+    return;
+  }
+  pushing = true;
+  try {
+    await ensureRemoteSchema();
+    const client = await getClient();
+    const have = localTables(db);
+    const tables = DURABLE_TABLES.filter(
+      (t) => have.has(t) && (!only || only.includes(t))
+    );
+    for (const table of tables) {
+      const cols = tableColumns(db, table);
+      if (cols.length === 0) continue;
+      const rows = db.prepare(`SELECT * FROM "${table}"`).all();
+      const quoted = cols.map((c) => `"${c}"`).join(", ");
+      const placeholders = cols.map(() => "?").join(", ");
+      const statements = [{ sql: `DELETE FROM "${table}"` }];
+      for (const row of rows) {
+        statements.push({
+          sql: `INSERT INTO "${table}" (${quoted}) VALUES (${placeholders})`,
+          args: cols.map((c) => row[c] ?? null),
+        });
+      }
+      for (let i = 0; i < statements.length; i += BATCH_CHUNK) {
+        await client.batch(statements.slice(i, i + BATCH_CHUNK));
+      }
+    }
+    console.log("[turso] push complete");
+  } catch (e) {
+    console.error("[turso] push failed (will retry on next trigger):", e.message);
+  } finally {
+    pushing = false;
+    if (pushQueued) {
+      pushQueued = false;
+      schedulePush(db, 5_000);
+    }
+  }
+}
+
+// Mark data dirty: a push goes out after a short debounce (coalesces bursts).
+export function schedulePush(db, delayMs = PUSH_DEBOUNCE_MS) {
+  if (!isEnabled()) return;
+  if (pushTimer) clearTimeout(pushTimer);
+  pushTimer = setTimeout(() => {
+    pushTimer = null;
+    pushToTurso(db).catch(() => {});
+  }, delayMs);
+  if (pushTimer.unref) pushTimer.unref();
+}
+
+// Start the periodic background push. Call once after boot pull.
+export function startPeriodicPush(db) {
+  if (!isEnabled() || intervalTimer) return;
+  intervalTimer = setInterval(() => {
+    pushToTurso(db).catch(() => {});
+  }, PUSH_INTERVAL_MS);
+  if (intervalTimer.unref) intervalTimer.unref();
+}
+
+export function stopPeriodicPush() {
+  if (pushTimer) clearTimeout(pushTimer);
+  if (intervalTimer) clearInterval(intervalTimer);
+  pushTimer = intervalTimer = null;
+}

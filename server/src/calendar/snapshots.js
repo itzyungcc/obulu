@@ -5,6 +5,7 @@
 // hook sites (a snapshot failure is logged and ignored).
 import { db } from "../db/database.js";
 import { MODEL_VERSION } from "../model/poisson.js";
+import { schedulePush } from "../db/turso-sync.js";
 
 const log = (...a) => console.log("[Calendar]", ...a);
 
@@ -106,7 +107,9 @@ export function recordPredictionSnapshot(fixture, prediction) {
         MODEL_VERSION,
         p.blendedWithOdds
       );
-    return Number(res.changes) === 1;
+    const saved = Number(res.changes) === 1;
+    if (saved) schedulePush(db); // back the new snapshot up to Turso
+    return saved;
   } catch (e) {
     log("snapshot record failed (non-fatal):", e.message);
     return false;

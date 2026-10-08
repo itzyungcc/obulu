@@ -5,6 +5,7 @@
 
 import { db } from "../db/database.js";
 import { loadAutomationConfig, loadEffectiveConfig } from "./automationConfig.js";
+import { schedulePush } from "../db/turso-sync.js";
 import { collectUpcoming } from "./collector.js";
 import { matchFixture } from "./fixtureMatcher.js";
 import { analyzeFixture } from "./analyze.js";
@@ -491,4 +492,5 @@ function finishRun(id, counts, status, error) {
     error,
     id
   );
+  schedulePush(db); // back the run's snapshots/alerts/bookings up to Turso
 }

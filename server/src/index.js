@@ -11,7 +11,8 @@ import liveRouter from "./routes/live.js";
 import { startScheduler, stopScheduler } from "./automation/scheduler.js";
 import { startResolver, stopResolver } from "./calendar/resolver.js";
 import { startLiveEngine, stopLiveEngine } from "./live/engine.js";
-import { closeDb } from "./db/database.js";
+import { closeDb, db } from "./db/database.js";
+import { pushToTurso, stopPeriodicPush } from "./db/turso-sync.js";
 
 const app = express();
 app.use(express.json());
@@ -70,7 +71,15 @@ function shutdown(signal) {
   stopScheduler();
   stopResolver();
   stopLiveEngine();
-  server.close(() => {
+  stopPeriodicPush();
+  server.close(async () => {
+    try {
+      // Final cloud backup before the disk is wiped (cap: 4s).
+      await Promise.race([
+        pushToTurso(db),
+        new Promise((r) => setTimeout(r, 4000)),
+      ]);
+    } catch { /* ignore */ }
     try { closeDb(); } catch { /* ignore */ }
     process.exit(0);
   });

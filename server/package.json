@@ -1,5 +1,6 @@
 {
   "dependencies": {
+    "@libsql/client": "^0.18.0",
     "express": "^4.21.2"
   },
   "description": "OBULU football comparison & prediction platform — backend API (informational only; no betting).",
