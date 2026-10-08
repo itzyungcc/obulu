@@ -71,18 +71,24 @@ export function syncStatus() {
   };
 }
 
+export function tursoUrl() {
+  return (process.env.TURSO_DATABASE_URL || "").trim();
+}
+
+export function tursoToken() {
+  return (process.env.TURSO_AUTH_TOKEN || "").trim();
+}
+
 export function isEnabled() {
-  return Boolean(
-    process.env.TURSO_DATABASE_URL && process.env.TURSO_AUTH_TOKEN
-  );
+  return Boolean(tursoUrl() && tursoToken());
 }
 
 async function getClient() {
   if (turso) return turso;
   const { createClient } = await import("@libsql/client");
   turso = createClient({
-    url: process.env.TURSO_DATABASE_URL,
-    authToken: process.env.TURSO_AUTH_TOKEN,
+    url: tursoUrl(),
+    authToken: tursoToken(),
   });
   return turso;
 }
