@@ -51,6 +51,11 @@ function notFound(res, message) {
 const DATE_RE = /^\d{4}-\d{2}-\d{2}$/;
 
 // ---------------------------------------------------------------- health ---
+// Render sets RENDER_GIT_COMMIT automatically on every deploy, so the running
+// commit is observable from /api/health without exposing anything sensitive.
+const DEPLOY_COMMIT =
+  (process.env.RENDER_GIT_COMMIT || "").slice(0, 12) || null;
+
 router.get(
   "/health",
   asyncHandler(async (req, res) => {
@@ -58,6 +63,7 @@ router.get(
     res.json({
       ok: true,
       version: "1.0.0",
+      commit: DEPLOY_COMMIT,
       dataMode: dataMode(),
       providers: {
         primary: kind === "api-football" ? "api-football" : kind === "football-data.org" ? "football-data.org" : kind === "sample" ? "sample" : "none",
