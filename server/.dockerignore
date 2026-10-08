@@ -1,0 +1,11 @@
+# Keep the Docker image free of local/dev artifacts.
+# The SQLite file must NOT be baked into the image: every deploy must boot
+# from a fresh disk (and restore durable tables from Turso when configured).
+data/
+*.db
+node_modules/
+npm-debug.log
+.git/
+.gitignore
+.env
+.DS_Store

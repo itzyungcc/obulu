@@ -9,6 +9,7 @@ import { cacheGet, cacheSet } from "../cache.js";
 import { getCached, recordPrediction, getMetrics, dedup } from "../perf.js";
 import { predictMatch, DISCLAIMER, MODEL_VERSION, METHOD } from "../model/poisson.js";
 import { recordPredictionSnapshot } from "../calendar/snapshots.js";
+import * as tursoSync from "../db/turso-sync.js";
 
 const router = Router();
 
@@ -63,6 +64,7 @@ router.get(
         odds: oddsEnabled(),
       },
       timestamp: new Date().toISOString(),
+      tursoBackup: tursoSync.isEnabled(),
     });
   })
 );

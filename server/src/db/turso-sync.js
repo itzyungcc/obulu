@@ -51,6 +51,7 @@ let pushTimer = null;
 let intervalTimer = null;
 let pushing = false;
 let pushQueued = false;
+let pulledOk = false; // true once a boot pull has completed without error
 
 export function isEnabled() {
   return Boolean(
@@ -170,6 +171,7 @@ export async function pullOnBoot(db) {
       total += rows.length;
     }
     console.log(`[turso] boot pull complete: ${total} rows restored`);
+    pulledOk = true;
   } catch (e) {
     // Never break boot because the cloud backup is unreachable.
     console.error("[turso] boot pull failed (continuing with local DB):", e.message);
@@ -177,9 +179,19 @@ export async function pullOnBoot(db) {
 }
 
 // Push durable tables to Turso. Tables omitted from `only` are skipped.
+// Safety: never push before a successful pull — a failed pull followed by a
+// push would overwrite the good cloud copy with stale/empty local data.
 export async function pushToTurso(db, only = null) {
-  if (!isEnabled() || pushing) {
-    if (!isEnabled()) return;
+  if (!isEnabled()) return;
+  if (!pulledOk) {
+    console.log("[turso] pull not yet confirmed; re-attempting pull before push");
+    await pullOnBoot(db);
+    if (!pulledOk) {
+      console.error("[turso] push skipped: cloud state not yet confirmed");
+      return;
+    }
+  }
+  if (pushing) {
     pushQueued = true;
     return;
   }
