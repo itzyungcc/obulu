@@ -247,22 +247,44 @@ export async function pushToTurso(db, only = null) {
     const tables = DURABLE_TABLES.filter(
       (t) => have.has(t) && (!only || only.includes(t))
     );
-    for (const table of tables) {
-      const cols = tableColumns(db, table);
-      if (cols.length === 0) continue;
-      const rows = db.prepare(`SELECT * FROM "${table}"`).all();
-      const quoted = cols.map((c) => `"${c}"`).join(", ");
-      const placeholders = cols.map(() => "?").join(", ");
-      const statements = [{ sql: `DELETE FROM "${table}"` }];
-      for (const row of rows) {
-        statements.push({
-          sql: `INSERT INTO "${table}" (${quoted}) VALUES (${placeholders})`,
-          args: cols.map((c) => row[c] ?? null),
-        });
+    // Whole push runs in one remote transaction: either the cloud mirror is
+    // fully replaced or untouched — no half-empty state if we crash midway.
+    // Phase 1: deletes, children before parents (reversed table order).
+    // Phase 2: inserts, parents before children (DURABLE_TABLES order).
+    // Both orderings keep the automation_* foreign keys satisfied.
+    const tx = await client.transaction("write");
+    try {
+      for (const table of [...tables].reverse()) {
+        await tx.execute(`DELETE FROM "${table}"`);
       }
-      for (let i = 0; i < statements.length; i += BATCH_CHUNK) {
-        await client.batch(statements.slice(i, i + BATCH_CHUNK));
+      for (const table of tables) {
+        const cols = tableColumns(db, table);
+        if (cols.length === 0) continue;
+        const rows = db.prepare(`SELECT * FROM "${table}"`).all();
+        if (rows.length === 0) continue;
+        const quoted = cols.map((c) => `"${c}"`).join(", ");
+        const placeholders = cols.map(() => "?").join(", ");
+        const statements = [];
+        for (const row of rows) {
+          statements.push({
+            sql: `INSERT INTO "${table}" (${quoted}) VALUES (${placeholders})`,
+            args: cols.map((c) => row[c] ?? null),
+          });
+        }
+        for (let i = 0; i < statements.length; i += BATCH_CHUNK) {
+          await tx.batch(statements.slice(i, i + BATCH_CHUNK));
+        }
       }
+      await tx.commit();
+    } catch (e) {
+      try {
+        await tx.rollback();
+      } catch { /* ignore */ }
+      throw e;
+    } finally {
+      try {
+        tx.close();
+      } catch { /* ignore */ }
     }
     console.log("[turso] push complete");
     lastPushAt = new Date().toISOString();
