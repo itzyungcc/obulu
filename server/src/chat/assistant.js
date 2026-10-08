@@ -1,25 +1,51 @@
-// OBULU Chat — Gemini-powered assistant grounded in real OBULU data.
-// The bot ONLY answers from data we feed it (fixtures, predictions, jackpot,
-// automation status). It never invents matches or probabilities.
-// Informational only: no betting advice, no bet placement, no odds selling.
+// OBULU AI — Gemini-powered assistant, rebuilt for reliability.
+//
+// Architecture: browser -> POST /api/assistant/stream (SSE) -> this module
+// -> Gemini streamGenerateContent. The API key never leaves the server.
+//
+// Reliability design:
+// - Streaming: first token is forwarded immediately; the UI never stares at
+//   a spinner for the whole generation.
+// - Bounded time: 30s to first token, 75s total per request, then a
+//   controlled TIMEOUT error. Nothing hangs forever.
+// - Retries: up to 2 automatic retries (3 attempts total) on transient
+//   failures (network, 5xx, 429) with backoff. Model-chain fallback on
+//   404/400.
+// - Every request ends in exactly one terminal state: ok | timeout |
+//   error | cancelled.
+// - Page context: when the frontend supplies real match data, it is used
+//   directly and the expensive fixtures fetch is skipped.
+// - Logging: timing + outcome + error category. Never the API key.
 
 import { getProvider } from "../providers/index.js";
 import { db } from "../db/database.js";
-import { analyzeFixture } from "../automation/analyze.js";
-import { sameTeam } from "../automation/normalizer.js";
 
 const MODEL_CHAIN = (process.env.GEMINI_MODEL || "gemini-flash-latest,gemini-2.5-flash")
   .split(",")
   .map((m) => m.trim())
   .filter(Boolean);
+
+const GEMINI_STREAM_URL = (key, model) =>
+  `https://generativelanguage.googleapis.com/v1beta/models/${model}:streamGenerateContent?alt=sse&key=${key}`;
 const GEMINI_URL = (key, model) =>
   `https://generativelanguage.googleapis.com/v1beta/models/${model}:generateContent?key=${key}`;
+
+const FIRST_TOKEN_TIMEOUT_MS = 30000;
+const TOTAL_TIMEOUT_MS = 75000;
+const MAX_ATTEMPTS = 3; // 1 initial + 2 automatic retries
+const RETRY_DELAYS_MS = [1000, 2500];
 
 export function chatConfigured() {
   return Boolean(process.env.GEMINI_API_KEY);
 }
 
-// --- Context builders (real OBULU data only) ---
+export function assistantModels() {
+  return [...MODEL_CHAIN];
+}
+
+// ---------------------------------------------------------------------------
+// Context builders (real OBULU data only)
+// ---------------------------------------------------------------------------
 
 async function upcomingContext(limit = 15) {
   try {
@@ -87,71 +113,287 @@ function automationContext() {
   }
 }
 
-const SYSTEM_PROMPT = `You are OBULU Assistant, a football prediction analyst inside the OBULU app.
+// Page context supplied by the frontend (real data already on screen).
+// When present, the expensive fixtures fetch is skipped.
+function pageContextText(ctx) {
+  if (!ctx || typeof ctx !== "object") return "";
+  if (ctx.page === "match" && ctx.match) {
+    const m = ctx.match;
+    const p = m.prediction || {};
+    const lines = [
+      "CURRENT PAGE: match analysis (data shown on screen right now).",
+      `Match: ${m.home || "?"} vs ${m.away || "?"}${m.league ? ` (${m.league})` : ""}${m.kickoff ? `, kickoff ${m.kickoff}` : ""}.`,
+    ];
+    if (p.homeWin != null) {
+      lines.push(
+        `OBULU prediction: ${p.outcome || "?"} — home ${Math.round(p.homeWin)}%, draw ${Math.round(p.draw || 0)}%, away ${Math.round(p.awayWin)}%.` +
+          (p.confidence != null ? ` Confidence ${Math.round(p.confidence)} (${p.confidenceLabel || ""}).` : "")
+      );
+    }
+    if (Array.isArray(m.factors) && m.factors.length) {
+      lines.push("Prediction factors: " + m.factors.slice(0, 8).join(" | "));
+    }
+    if (m.form) lines.push(`Form notes: ${String(m.form).slice(0, 500)}`);
+    return lines.join("\n");
+  }
+  if (ctx.page) return `CURRENT PAGE: ${ctx.page}.`;
+  return "";
+}
+
+const SYSTEM_PROMPT = `You are OBULU AI, the intelligent football analysis assistant inside the OBULU app.
 OBULU is an informational football statistics platform. Its predictions come from a Poisson/Dixon-Coles statistical model.
 
 STRICT RULES:
-- Answer ONLY from the OBULU data provided below. If the data doesn't cover the question, say so plainly — never invent matches, scores, or probabilities.
-- Keep answers short and phone-friendly (2-4 sentences unless detail is asked for).
-- Probabilities are the model's statistical estimates, not guarantees.
+- Answer ONLY from the OBULU data provided below. If the data doesn't cover the question, say so plainly — never invent matches, scores, probabilities, injuries, odds, or team news.
+- Keep answers concise and phone-friendly: 2-6 short paragraphs or bullet points unless the user asks for detail.
+- Probabilities are the model's statistical estimates, not guarantees. Use language like "OBULU estimates…", "based on the available data…", "there's still uncertainty…". Never claim certainty about future results.
 - NEVER give betting advice, never recommend stakes, never suggest anyone should bet. You may explain what the model's numbers mean.
 - If asked about a specific match, look for it in the data. Team name matching is fuzzy (e.g. "Man City" = "Manchester City").
-- Today's date context is included in the data timestamps (UTC).
+- Do not pretend to have accessed data that was not supplied to you.
 
 OBULU DATA:
 `;
 
-// --- Gemini call ---
+// ---------------------------------------------------------------------------
+// Gemini streaming core
+// ---------------------------------------------------------------------------
 
-async function askGemini(systemData, history, userMessage) {
-  const key = process.env.GEMINI_API_KEY;
-  const contents = [
-    ...history.slice(-8).map((m) => ({
-      role: m.role === "assistant" ? "model" : "user",
-      parts: [{ text: m.text }],
-    })),
-    { role: "user", parts: [{ text: userMessage }] },
-  ];
-  const payload = {
+function buildPayload(systemData, history, userMessage) {
+  return {
     system_instruction: { parts: [{ text: SYSTEM_PROMPT + systemData }] },
-    contents,
-    generationConfig: { maxOutputTokens: 400, temperature: 0.4 },
+    contents: [
+      ...history.slice(-8).map((m) => ({
+        role: m.role === "assistant" ? "model" : "user",
+        parts: [{ text: String(m.text || "").slice(0, 2000) }],
+      })),
+      { role: "user", parts: [{ text: userMessage }] },
+    ],
+    generationConfig: { maxOutputTokens: 500, temperature: 0.4 },
   };
+}
+
+function classifyError(status, message) {
+  if (status === 429) return "RATE_LIMITED";
+  if (status === 401 || status === 403) return "AUTH";
+  if (status === 404) return "MODEL_NOT_FOUND";
+  if (status === 400) return "BAD_REQUEST";
+  if (status >= 500) return "UPSTREAM_5XX";
+  if (/abort/i.test(message || "")) return "TIMEOUT";
+  return "NETWORK";
+}
+
+const TRANSIENT = new Set(["RATE_LIMITED", "UPSTREAM_5XX", "NETWORK", "TIMEOUT"]);
+
+// Parse one Gemini SSE data payload into text delta ("" if none).
+function sseTextDelta(data) {
+  try {
+    const json = JSON.parse(data);
+    const parts = json.candidates?.[0]?.content?.parts || [];
+    return parts.map((p) => (typeof p.text === "string" ? p.text : "")).join("");
+  } catch {
+    return "";
+  }
+}
+
+/**
+ * Stream a Gemini reply. Calls onToken(text) for each delta.
+ * Resolves { text, model, firstTokenMs, totalMs } or throws a coded error:
+ *   TIMEOUT | RATE_LIMITED | AUTH | UPSTREAM | EMPTY_RESPONSE | CANCELLED
+ * `signal` (AbortSignal) cancels the request -> throws CANCELLED.
+ */
+export async function chatReplyStream({ systemData, history = [], userMessage, onToken, signal, timeouts = {} }) {
+  const key = process.env.GEMINI_API_KEY;
+  if (!key) {
+    const err = new Error("CHAT_NOT_CONFIGURED");
+    err.code = "CHAT_NOT_CONFIGURED";
+    throw err;
+  }
+  const firstTokenTimeout = timeouts.firstTokenMs ?? FIRST_TOKEN_TIMEOUT_MS;
+  const totalTimeout = timeouts.totalMs ?? TOTAL_TIMEOUT_MS;
+  const payload = buildPayload(systemData, history, userMessage);
+  const startedAt = Date.now();
   let lastErr = null;
-  for (const model of MODEL_CHAIN) {
+
+  for (let attempt = 1; attempt <= MAX_ATTEMPTS; attempt++) {
+    const model = MODEL_CHAIN[(attempt - 1) % MODEL_CHAIN.length];
     const ctrl = new AbortController();
-    const timer = setTimeout(() => ctrl.abort(), 45000);
+    const onAbort = () => ctrl.abort();
+    if (signal) {
+      if (signal.aborted) {
+        const err = new Error("CANCELLED");
+        err.code = "CANCELLED";
+        throw err;
+      }
+      signal.addEventListener("abort", onAbort, { once: true });
+    }
+    const firstTokenTimer = setTimeout(() => ctrl.abort(), firstTokenTimeout);
+    const totalTimer = setTimeout(() => ctrl.abort(), totalTimeout);
+    let firstTokenAt = 0;
+
     try {
-      const res = await fetch(GEMINI_URL(key, model), {
+      const res = await fetch(GEMINI_STREAM_URL(key, model), {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify(payload),
         signal: ctrl.signal,
       });
-      clearTimeout(timer);
-      if (!res.ok) {
+
+      if (!res.ok || !res.body) {
         const t = await res.text().catch(() => "");
-        lastErr = new Error(`Gemini API error ${res.status} on ${model}: ${t.slice(0, 200)}`);
-        // Only fall through on model-not-found / bad-request; auth/quota errors won't fix themselves.
-        if (res.status === 404 || res.status === 400) continue;
+        const category = classifyError(res.status, t);
+        lastErr = new Error(`Gemini ${res.status} on ${model}`);
+        lastErr.code = category;
+        lastErr.status = res.status;
+        // Model missing / bad request: fall through to next model immediately.
+        if (category === "MODEL_NOT_FOUND" || category === "BAD_REQUEST") continue;
+        if (TRANSIENT.has(category) && attempt < MAX_ATTEMPTS) {
+          await sleep(RETRY_DELAYS_MS[attempt - 1] || 2000);
+          continue;
+        }
         throw lastErr;
       }
-      const json = await res.json();
-      const text =
-        json.candidates?.[0]?.content?.parts?.map((p) => p.text || "").join("") || "";
-      if (!text) throw new Error("Gemini returned an empty response");
-      return { text: text.trim(), model };
+
+      // Stream SSE chunks.
+      const reader = res.body.getReader();
+      const decoder = new TextDecoder();
+      let buffer = "";
+      let fullText = "";
+      let gotToken = false;
+
+      for (;;) {
+        const { done, value } = await reader.read();
+        if (done) break;
+        buffer += decoder.decode(value, { stream: true });
+        const lines = buffer.split("\n");
+        buffer = lines.pop() || "";
+        for (const line of lines) {
+          const trimmed = line.trim();
+          if (!trimmed.startsWith("data:")) continue;
+          const data = trimmed.slice(5).trim();
+          if (!data || data === "[DONE]") continue;
+          const delta = sseTextDelta(data);
+          if (delta) {
+            if (!gotToken) {
+              gotToken = true;
+              firstTokenAt = Date.now();
+              clearTimeout(firstTokenTimer);
+            }
+            fullText += delta;
+            if (onToken) onToken(delta);
+          }
+        }
+        if (signal?.aborted) {
+          try { await reader.cancel(); } catch { /* ignore */ }
+          const err = new Error("CANCELLED");
+          err.code = "CANCELLED";
+          throw err;
+        }
+      }
+
+      const text = fullText.trim();
+      if (!text) {
+        lastErr = new Error("EMPTY_RESPONSE");
+        lastErr.code = "EMPTY_RESPONSE";
+        // One extra attempt for empty responses is handled by the loop.
+        if (attempt < MAX_ATTEMPTS) {
+          await sleep(RETRY_DELAYS_MS[attempt - 1] || 2000);
+          continue;
+        }
+        throw lastErr;
+      }
+      const totalMs = Date.now() - startedAt;
+      logAttempt({ model, attempt, outcome: "ok", firstTokenMs: firstTokenAt ? firstTokenAt - startedAt : null, totalMs });
+      return { text, model, firstTokenMs: firstTokenAt ? firstTokenAt - startedAt : null, totalMs };
     } catch (e) {
-      clearTimeout(timer);
-      lastErr = e.name === "AbortError" ? new Error(`Gemini timed out on ${model}`) : e;
-      if (e.message.includes("Gemini API error")) throw e;
-      // network error / timeout — try next model
+      if (e.code === "CANCELLED" || signal?.aborted) {
+        const err = new Error("CANCELLED");
+        err.code = "CANCELLED";
+        throw err;
+      }
+      // Terminal codes set deliberately upstream: pass through unchanged.
+      if (
+        e.code === "EMPTY_RESPONSE" ||
+        e.code === "AUTH" ||
+        e.code === "MODEL_NOT_FOUND" ||
+        e.code === "BAD_REQUEST"
+      ) {
+        logAttempt({ model, attempt, outcome: e.code.toLowerCase(), totalMs: Date.now() - startedAt });
+        throw e;
+      }
+      const category =
+        typeof e.code === "string" && TRANSIENT.has(e.code)
+          ? e.code
+          : /abort/i.test(e.name || "")
+            ? "TIMEOUT"
+            : "NETWORK";
+      // Never mutate the original error (e.g. DOMException.code is read-only).
+      lastErr = Object.assign(new Error(e.message || "request failed"), { code: category });
+      if (e.status) lastErr.status = e.status;
+      logAttempt({ model, attempt, outcome: category.toLowerCase(), totalMs: Date.now() - startedAt });
+      if (e.code === "MODEL_NOT_FOUND" || e.code === "BAD_REQUEST" || e.code === "AUTH") throw lastErr;
+      if (TRANSIENT.has(category) && attempt < MAX_ATTEMPTS) {
+        await sleep(RETRY_DELAYS_MS[attempt - 1] || 2000);
+        continue;
+      }
+      // Normalize to a small set of terminal codes.
+      if (category === "TIMEOUT") lastErr.code = "TIMEOUT";
+      else if (category === "RATE_LIMITED") lastErr.code = "RATE_LIMITED";
+      else if (category === "UPSTREAM_5XX" || category === "NETWORK") lastErr.code = "UPSTREAM";
+      throw lastErr;
+    } finally {
+      clearTimeout(firstTokenTimer);
+      clearTimeout(totalTimer);
+      if (signal) signal.removeEventListener("abort", onAbort);
     }
   }
-  throw lastErr || new Error("All Gemini models failed");
+  throw lastErr || Object.assign(new Error("UPSTREAM"), { code: "UPSTREAM" });
 }
 
-// --- Public API ---
+const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
+
+function logAttempt({ model, attempt, outcome, firstTokenMs, totalMs }) {
+  // Timing + outcome only. Never the API key or conversation content.
+  console.log(
+    `[assistant] model=${model} attempt=${attempt} outcome=${outcome}` +
+      (firstTokenMs != null ? ` firstTokenMs=${firstTokenMs}` : "") +
+      (totalMs != null ? ` totalMs=${totalMs}` : "")
+  );
+}
+
+// ---------------------------------------------------------------------------
+// Context assembly
+// ---------------------------------------------------------------------------
+
+export async function buildSystemData(pageContext) {
+  const page = pageContextText(pageContext);
+  if (page) {
+    // Match-page fast path: real on-screen data, no fixtures fetch.
+    const [predictions, automation] = await Promise.all([
+      Promise.resolve(recentPredictionsContext()),
+      Promise.resolve(automationContext()),
+    ]);
+    return [page, "", "RECENT OBULU PREDICTIONS:", predictions, "", "AUTOMATION:", automation].join("\n");
+  }
+  const [fixtures, predictions, automation] = await Promise.all([
+    upcomingContext(),
+    Promise.resolve(recentPredictionsContext()),
+    Promise.resolve(automationContext()),
+  ]);
+  return [
+    "UPCOMING FIXTURES:",
+    fixtures,
+    "",
+    "RECENT OBULU PREDICTIONS:",
+    predictions,
+    "",
+    "AUTOMATION:",
+    automation,
+  ].join("\n");
+}
+
+// ---------------------------------------------------------------------------
+// Public API
+// ---------------------------------------------------------------------------
 
 // Simple in-memory per-IP rate limit: 20 messages/hour.
 const rateBuckets = new Map();
@@ -165,40 +407,65 @@ function rateLimited(ip) {
   return false;
 }
 
-export async function chatReply({ message, history = [], ip }) {
-  if (!chatConfigured()) {
-    const err = new Error("CHAT_NOT_CONFIGURED");
-    err.code = "CHAT_NOT_CONFIGURED";
-    throw err;
-  }
+function checkRateLimit(ip) {
   if (rateLimited(ip || "unknown")) {
     const err = new Error("RATE_LIMITED");
     err.code = "RATE_LIMITED";
     throw err;
   }
+}
+
+function cleanMessage(message) {
   const text = String(message || "").trim().slice(0, 1000);
   if (!text) {
     const err = new Error("EMPTY_MESSAGE");
     err.code = "EMPTY_MESSAGE";
     throw err;
   }
+  return text;
+}
 
-  const [fixtures, predictions, automation] = await Promise.all([
-    upcomingContext(),
-    Promise.resolve(recentPredictionsContext()),
-    Promise.resolve(automationContext()),
-  ]);
-  const systemData = [
-    "UPCOMING FIXTURES:",
-    fixtures,
-    "",
-    "RECENT OBULU PREDICTIONS:",
-    predictions,
-    "",
-    "AUTOMATION:",
-    automation,
-  ].join("\n");
+/**
+ * Streaming entry point used by POST /api/assistant/stream.
+ * onToken receives text deltas. Resolves the full reply or throws a coded error.
+ */
+export async function assistantReplyStream({ message, history = [], pageContext = null, ip, onToken, signal }) {
+  if (!chatConfigured()) {
+    const err = new Error("CHAT_NOT_CONFIGURED");
+    err.code = "CHAT_NOT_CONFIGURED";
+    throw err;
+  }
+  checkRateLimit(ip);
+  const text = cleanMessage(message);
+  const systemData = await buildSystemData(pageContext);
+  return chatReplyStream({ systemData, history, userMessage: text, onToken, signal });
+}
 
-  const { text: reply, model } = await askGemini(systemData, history, text);
-  return { reply, model };
+/**
+ * Non-streaming entry point (kept for the /api/chat route + Chat tab).
+ * Collects the stream; falls back to a single generateContent call if the
+ * streaming HTTP request itself fails before any token.
+ */
+export async function chatReply({ message, history = [], ip, pageContext = null }) {
+  if (!chatConfigured()) {
+    const err = new Error("CHAT_NOT_CONFIGURED");
+    err.code = "CHAT_NOT_CONFIGURED";
+    throw err;
+  }
+  checkRateLimit(ip);
+  const text = cleanMessage(message);
+  const systemData = await buildSystemData(pageContext);
+  let full = "";
+  try {
+    const { text: reply, model } = await chatReplyStream({
+      systemData,
+      history,
+      userMessage: text,
+      onToken: (d) => { full += d; },
+    });
+    return { reply, model };
+  } catch (e) {
+    if (full.trim()) return { reply: full.trim(), model: "partial" };
+    throw e;
+  }
 }

@@ -15,6 +15,7 @@ import Disclaimer from "./pages/Disclaimer.jsx";
 import Automation from "./pages/Automation.jsx";
 import Jackpot from "./pages/Jackpot.jsx";
 import Chat from "./pages/Chat.jsx";
+import FloatingAssistant from "./components/AiAssistant/FloatingAssistant.jsx";
 
 function ScrollToTop() {
   const { pathname } = useLocation();
@@ -48,6 +49,7 @@ export default function App() {
         </Routes>
       </main>
       <Footer />
+      <FloatingAssistant />
     </div>
   );
 }

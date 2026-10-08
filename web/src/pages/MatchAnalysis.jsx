@@ -10,6 +10,7 @@ import Loading from "../components/Loading.jsx";
 import ErrorState from "../components/ErrorState.jsx";
 import SampleBadge from "../components/SampleBadge.jsx";
 import { formatKickoff } from "../components/MatchCard.jsx";
+import { setAssistantContext, clearAssistantContext } from "../components/AiAssistant/assistantContext.js";
 
 const DISCLAIMER_VERBATIM =
   "Predictions are statistical estimates based on available data and are not guarantees of match results.";
@@ -156,6 +157,31 @@ export default function MatchAnalysis() {
   const [sampleData, setSampleData] = useState(false);
   const [state, setState] = useState("loading");
   const [error, setError] = useState(null);
+
+  // Publish real on-screen match data for OBULU AI ("Explain prediction").
+  useEffect(() => {
+    if (match && prediction) {
+      setAssistantContext({
+        page: "match",
+        match: {
+          home: match.home?.name,
+          away: match.away?.name,
+          league: match.league?.name,
+          kickoff: match.kickoff,
+          prediction: {
+            homeWin: prediction.homeWin,
+            draw: prediction.draw,
+            awayWin: prediction.awayWin,
+            outcome: prediction.predictedOutcome,
+            confidence: prediction.confidence?.score,
+            confidenceLabel: prediction.confidence?.label,
+          },
+          factors: Array.isArray(prediction.factors) ? prediction.factors : [],
+        },
+      });
+    }
+    return () => clearAssistantContext();
+  }, [match, prediction, id]);
 
   const load = async () => {
     setState("loading");
