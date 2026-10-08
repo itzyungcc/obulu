@@ -7,6 +7,7 @@ import { db } from "./db/database.js";
 // cached). v2: flushed stale sample-provider entries that survived a
 // Render deploy on the persistent disk.
 const CACHE_VERSION = "v2:";
+export { CACHE_VERSION };
 const namespaced = (key) => CACHE_VERSION + key;
 
 export const CACHE_TTLS = {

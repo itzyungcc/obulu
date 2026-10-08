@@ -24,7 +24,7 @@ const {
   getCachedEvents,
   SPORTYBET_CACHE_KEY,
 } = await import("../src/sportybet/client.js");
-const { cacheSet, cacheInvalidate } = await import("../src/cache.js");
+const { cacheSet, cacheInvalidate, CACHE_VERSION } = await import("../src/cache.js");
 const { db } = await import("../src/db/database.js");
 const { default: sportybetRouter } = await import("../src/routes/sportybet.js");
 const { default: jackpotRouter } = await import("../src/routes/jackpot.js");
@@ -286,7 +286,7 @@ await check("cache-hit: second getCachedEvents does not refetch", async () => {
 await check("expired cache refetches", async () => {
   fetchCalls = 0;
   db.prepare("UPDATE cache_meta SET expires_at = ? WHERE key = ?")
-    .run(new Date(Date.now() - 1000).toISOString(), SPORTYBET_CACHE_KEY);
+    .run(new Date(Date.now() - 1000).toISOString(), CACHE_VERSION + SPORTYBET_CACHE_KEY);
   const again = await getCachedEvents();
   assert.strictEqual(fetchCalls, 1, "expired cache triggers refetch");
   assert.strictEqual(again.events.length, 1);
