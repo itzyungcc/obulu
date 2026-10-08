@@ -1,23 +1,20 @@
-import { useState } from "react";
 import { NavLink, Link } from "react-router-dom";
 import LogoMark from "./LogoMark.jsx";
 
 const LINKS = [
   { to: "/", label: "Home", end: true },
-  { to: "/upcoming", label: "Upcoming Matches" },
+  { to: "/upcoming", label: "Upcoming" },
   { to: "/live", label: "Live" },
   { to: "/calendar", label: "Calendar" },
   { to: "/search", label: "Search" },
   { to: "/leagues", label: "Leagues" },
-  { to: "/about", label: "About OBULU" },
   { to: "/automation", label: "Automation" },
   { to: "/jackpot", label: "Jackpot" },
   { to: "/chat", label: "Assistant" },
+  { to: "/about", label: "About" },
 ];
 
 export default function Header() {
-  const [open, setOpen] = useState(false);
-
   return (
     <header className="site-header">
       <div className="container header-inner">
@@ -27,27 +24,12 @@ export default function Header() {
           </span>
           <span className="brand-name">OBULU</span>
         </Link>
-        <button
-          type="button"
-          className="nav-toggle"
-          aria-expanded={open}
-          aria-controls="primary-nav"
-          aria-label={open ? "Close navigation menu" : "Open navigation menu"}
-          onClick={() => setOpen((o) => !o)}
-        >
-          <span aria-hidden="true">{open ? "✕" : "☰"}</span>
-        </button>
-        <nav
-          id="primary-nav"
-          className={`site-nav${open ? " open" : ""}`}
-          aria-label="Primary"
-        >
+        <nav className="site-nav" aria-label="Primary">
           {LINKS.map((l) => (
             <NavLink
               key={l.to}
               to={l.to}
               end={l.end}
-              onClick={() => setOpen(false)}
               className={({ isActive }) =>
                 isActive ? "nav-link active" : "nav-link"
               }

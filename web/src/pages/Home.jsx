@@ -2,7 +2,6 @@ import { useEffect, useState } from "react";
 import { Link, useNavigate } from "react-router-dom";
 import { getAllFixtures, getLeagues } from "../api.js";
 import MatchCard from "../components/MatchCard.jsx";
-import LogoMark from "../components/LogoMark.jsx";
 import Loading from "../components/Loading.jsx";
 import ErrorState from "../components/ErrorState.jsx";
 import SampleBadge from "../components/SampleBadge.jsx";
@@ -60,17 +59,6 @@ export default function Home() {
       {sampleData && <SampleBadge />}
 
       <section className="hero card">
-        <p className="hero-mark" aria-hidden="true">
-          <LogoMark size={72} />
-        </p>
-        <h1>OBULU</h1>
-        <p className="hero-sub">Football Comparison &amp; Prediction</p>
-        <p className="hero-tag">
-          Compare teams, explore recent form, head-to-head records and league
-          positions, and view statistical match predictions — informational
-          only, never betting.
-        </p>
-
         <form className="hero-search" onSubmit={goSearch} role="search">
           <label className="visually-hidden" htmlFor="home-search">
             Search teams or matches
