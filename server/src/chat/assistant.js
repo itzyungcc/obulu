@@ -30,10 +30,10 @@ const GEMINI_STREAM_URL = (key, model) =>
 const GEMINI_URL = (key, model) =>
   `https://generativelanguage.googleapis.com/v1beta/models/${model}:generateContent?key=${key}`;
 
-const FIRST_TOKEN_TIMEOUT_MS = 30000;
+const FIRST_TOKEN_TIMEOUT_MS = 40000;
 const TOTAL_TIMEOUT_MS = 75000;
-const MAX_ATTEMPTS = 3; // 1 initial + 2 automatic retries
-const RETRY_DELAYS_MS = [1000, 2500];
+const MAX_ATTEMPTS = 2; // 1 initial + 1 retry (worst case ~81s < 90s frontend cap)
+const RETRY_DELAYS_MS = [1000];
 
 export function chatConfigured() {
   return Boolean(process.env.GEMINI_API_KEY);
@@ -158,7 +158,14 @@ OBULU DATA:
 // Gemini streaming core
 // ---------------------------------------------------------------------------
 
-function buildPayload(systemData, history, userMessage) {
+function buildPayload(systemData, history, userMessage, model) {
+  const generationConfig = { maxOutputTokens: 500, temperature: 0.4 };
+  // Keep thinking cheap: Gemini 2.5 uses a numeric budget, Gemini 3+ uses a
+  // level string (numeric budgets are rejected with 400 on 3.x). The rolling
+  // alias is treated as current-generation. If the API rejects the field,
+  // the caller retries the same model without it.
+  const thinking = thinkingConfigFor(model);
+  if (thinking) generationConfig.thinkingConfig = thinking;
   return {
     system_instruction: { parts: [{ text: SYSTEM_PROMPT + systemData }] },
     contents: [
@@ -168,8 +175,14 @@ function buildPayload(systemData, history, userMessage) {
       })),
       { role: "user", parts: [{ text: userMessage }] },
     ],
-    generationConfig: { maxOutputTokens: 500, temperature: 0.4 },
+    generationConfig,
   };
+}
+
+// Exported for unit tests.
+export function thinkingConfigFor(model) {
+  if (/2\.5/.test(model)) return { thinkingBudget: 256 };
+  return { thinkingLevel: "low" };
 }
 
 function classifyError(status, message) {
@@ -210,12 +223,16 @@ export async function chatReplyStream({ systemData, history = [], userMessage, o
   }
   const firstTokenTimeout = timeouts.firstTokenMs ?? FIRST_TOKEN_TIMEOUT_MS;
   const totalTimeout = timeouts.totalMs ?? TOTAL_TIMEOUT_MS;
-  const payload = buildPayload(systemData, history, userMessage);
   const startedAt = Date.now();
   let lastErr = null;
+  // Models whose thinking field was rejected (400): retry without it.
+  const thinkingStripped = new Set();
 
   for (let attempt = 1; attempt <= MAX_ATTEMPTS; attempt++) {
     const model = MODEL_CHAIN[(attempt - 1) % MODEL_CHAIN.length];
+    // Build the payload per attempt: the thinking field depends on the model.
+    const payload = buildPayload(systemData, history, userMessage, model);
+    if (thinkingStripped.has(model)) delete payload.generationConfig.thinkingConfig;
     const ctrl = new AbortController();
     const onAbort = () => ctrl.abort();
     if (signal) {
@@ -244,6 +261,15 @@ export async function chatReplyStream({ systemData, history = [], userMessage, o
         lastErr = new Error(`Gemini ${res.status} on ${model}`);
         lastErr.code = category;
         lastErr.status = res.status;
+        // The thinking field may be rejected on some model generations (400
+        // with no field named). Retry the same model once without it; the
+        // attempt-- keeps this param fix from consuming the retry budget.
+        if (category === "BAD_REQUEST" && !thinkingStripped.has(model) && payload.generationConfig?.thinkingConfig) {
+          thinkingStripped.add(model);
+          logAttempt({ model, attempt, outcome: "thinking_retry", totalMs: Date.now() - startedAt });
+          attempt--;
+          continue;
+        }
         // Model missing / bad request: fall through to next model immediately.
         if (category === "MODEL_NOT_FOUND" || category === "BAD_REQUEST") continue;
         if (TRANSIENT.has(category) && attempt < MAX_ATTEMPTS) {
@@ -351,7 +377,22 @@ export async function chatReplyStream({ systemData, history = [], userMessage, o
 
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
 
+// Recent attempt metadata for GET /api/assistant/diagnostics. Timing and
+// outcome only — never message content, never the API key.
+const recentAttempts = [];
+const MAX_ATTEMPT_LOG = 50;
+
 function logAttempt({ model, attempt, outcome, firstTokenMs, totalMs }) {
+  const entry = {
+    t: new Date().toISOString(),
+    model,
+    attempt,
+    outcome,
+    firstTokenMs: firstTokenMs ?? null,
+    totalMs: totalMs ?? null,
+  };
+  recentAttempts.push(entry);
+  if (recentAttempts.length > MAX_ATTEMPT_LOG) recentAttempts.shift();
   // Timing + outcome only. Never the API key or conversation content.
   console.log(
     `[assistant] model=${model} attempt=${attempt} outcome=${outcome}` +
@@ -360,11 +401,26 @@ function logAttempt({ model, attempt, outcome, firstTokenMs, totalMs }) {
   );
 }
 
+export function getAssistantDiagnostics() {
+  return {
+    models: assistantModels(),
+    recentAttempts: [...recentAttempts].reverse(),
+  };
+}
+
 // ---------------------------------------------------------------------------
 // Context assembly
 // ---------------------------------------------------------------------------
 
-export async function buildSystemData(pageContext) {
+// Greetings and meta questions need no fixture data: skip the provider call
+// entirely (faster + smaller prompt). Everything else gets the full context.
+const SMALLTALK_RE = /^(hi|hey|hello|yo|thanks?|thank you|ok|okay|bye|good\s?(morning|afternoon|evening|day)|what can you do|help|who are you|what are you)\b/i;
+
+function needsFixtures(userMessage) {
+  return !SMALLTALK_RE.test(String(userMessage || "").trim());
+}
+
+export async function buildSystemData(pageContext, userMessage = "") {
   const page = pageContextText(pageContext);
   if (page) {
     // Match-page fast path: real on-screen data, no fixtures fetch.
@@ -375,14 +431,12 @@ export async function buildSystemData(pageContext) {
     return [page, "", "RECENT OBULU PREDICTIONS:", predictions, "", "AUTOMATION:", automation].join("\n");
   }
   const [fixtures, predictions, automation] = await Promise.all([
-    upcomingContext(),
+    needsFixtures(userMessage) ? upcomingContext() : Promise.resolve(""),
     Promise.resolve(recentPredictionsContext()),
     Promise.resolve(automationContext()),
   ]);
   return [
-    "UPCOMING FIXTURES:",
-    fixtures,
-    "",
+    ...(fixtures ? ["UPCOMING FIXTURES:", fixtures, ""] : []),
     "RECENT OBULU PREDICTIONS:",
     predictions,
     "",
@@ -437,7 +491,7 @@ export async function assistantReplyStream({ message, history = [], pageContext 
   }
   checkRateLimit(ip);
   const text = cleanMessage(message);
-  const systemData = await buildSystemData(pageContext);
+  const systemData = await buildSystemData(pageContext, text);
   return chatReplyStream({ systemData, history, userMessage: text, onToken, signal });
 }
 
@@ -454,7 +508,7 @@ export async function chatReply({ message, history = [], ip, pageContext = null 
   }
   checkRateLimit(ip);
   const text = cleanMessage(message);
-  const systemData = await buildSystemData(pageContext);
+  const systemData = await buildSystemData(pageContext, text);
   let full = "";
   try {
     const { text: reply, model } = await chatReplyStream({

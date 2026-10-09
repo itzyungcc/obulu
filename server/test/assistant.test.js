@@ -101,19 +101,19 @@ await check("falls back to next model on 404", async () => {
   assert.strictEqual(calls, 2);
 });
 
-await check("retries transient 500 then succeeds (max 2 retries)", async () => {
+await check("retries transient 500 then succeeds (1 retry)", async () => {
   let calls = 0;
   mockHandler = async () => {
     calls++;
-    if (calls < 3) return new Response("boom", { status: 500 });
+    if (calls < 2) return new Response("boom", { status: 500 });
     return sseResponse([geminiChunk("recovered")]);
   };
   const r = await chatReplyStream({ systemData: "D", history: [], userMessage: "hi", onToken: () => {} });
   assert.strictEqual(r.text, "recovered");
-  assert.strictEqual(calls, 3, "1 initial + 2 retries");
+  assert.strictEqual(calls, 2, "1 initial + 1 retry");
 });
 
-await check("gives up after 3 attempts on persistent 500", async () => {
+await check("gives up after 2 attempts on persistent 500", async () => {
   let calls = 0;
   mockHandler = async () => {
     calls++;
@@ -123,7 +123,7 @@ await check("gives up after 3 attempts on persistent 500", async () => {
     chatReplyStream({ systemData: "D", history: [], userMessage: "hi", onToken: () => {} }),
     (e) => e.code === "UPSTREAM"
   );
-  assert.strictEqual(calls, 3);
+  assert.strictEqual(calls, 2);
 });
 
 await check("first-token timeout produces TIMEOUT", async () => {
@@ -239,6 +239,59 @@ await check("API key never appears in request payload sent to Gemini", async () 
   };
   await chatReplyStream({ systemData: "D", history: [], userMessage: "hi", onToken: () => {} });
   assert.ok(!seenBody.includes("test-key"), "key must not be in the JSON body");
+});
+
+await check("thinking config: 2.5 model gets budget, others get level", async () => {
+  const { thinkingConfigFor } = await import("../src/chat/assistant.js");
+  assert.deepStrictEqual(thinkingConfigFor("gemini-2.5-flash"), { thinkingBudget: 256 });
+  assert.deepStrictEqual(thinkingConfigFor("gemini-flash-latest"), { thinkingLevel: "low" });
+  assert.deepStrictEqual(thinkingConfigFor("gemini-3.5-flash"), { thinkingLevel: "low" });
+  // And the payload actually carries it:
+  const bodies = {};
+  mockHandler = async (url, opts) => {
+    bodies[String(url)] = JSON.parse(opts.body);
+    return sseResponse([geminiChunk("ok")]);
+  };
+  await chatReplyStream({ systemData: "D", history: [], userMessage: "hi", onToken: () => {} });
+  const urlA = Object.keys(bodies).find((u) => u.includes("test-model-a"));
+  assert.deepStrictEqual(bodies[urlA].generationConfig.thinkingConfig, { thinkingLevel: "low" });
+});
+
+await check("400 on thinking field retries the SAME model without it", async () => {
+  let calls = 0;
+  const bodies = [];
+  mockHandler = async (_url, opts) => {
+    calls++;
+    bodies.push(JSON.parse(opts.body));
+    if (calls === 1) return new Response("invalid argument", { status: 400 });
+    return sseResponse([geminiChunk("recovered")]);
+  };
+  const r = await chatReplyStream({ systemData: "D", history: [], userMessage: "hi", onToken: () => {} });
+  assert.strictEqual(r.text, "recovered");
+  assert.strictEqual(calls, 2, "same model retried once");
+  assert.ok(bodies[0].generationConfig.thinkingConfig, "first attempt had thinking config");
+  assert.ok(!bodies[1].generationConfig.thinkingConfig, "retry dropped the thinking field");
+  assert.strictEqual(r.model, "test-model-a", "did not burn the retry on model fallback");
+});
+
+await check("smalltalk skips the fixtures fetch", async () => {
+  const withHello = await buildSystemData(null, "hello");
+  assert.ok(!withHello.includes("UPCOMING FIXTURES"), "no fixtures section for greetings");
+  assert.ok(withHello.includes("RECENT OBULU PREDICTIONS"), "cheap DB context still included");
+  const withQuestion = await buildSystemData(null, "which fixtures are upcoming this weekend?");
+  assert.ok(withQuestion.includes("UPCOMING FIXTURES"), "fixtures included for fixture questions");
+});
+
+await check("diagnostics exposes models + attempt metadata, no secrets", async () => {
+  const { getAssistantDiagnostics } = await import("../src/chat/assistant.js");
+  mockHandler = async () => sseResponse([geminiChunk("ok")]);
+  await chatReplyStream({ systemData: "D", history: [], userMessage: "hi", onToken: () => {} });
+  const d = getAssistantDiagnostics();
+  assert.deepStrictEqual(d.models, ["test-model-a", "test-model-b"]);
+  assert.ok(Array.isArray(d.recentAttempts) && d.recentAttempts.length > 0, "attempts logged");
+  const a = d.recentAttempts[0];
+  assert.ok(a.model && a.outcome, "metadata present");
+  assert.ok(!JSON.stringify(d).includes("test-key"), "no API key leaked");
 });
 
 globalThis.fetch = realFetch;

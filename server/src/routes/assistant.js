@@ -5,7 +5,7 @@
 //   event: error  data: {"code":"...","message":"..."}
 // The Gemini key never leaves the server.
 import express from "express";
-import { assistantReplyStream, chatConfigured } from "../chat/assistant.js";
+import { assistantReplyStream, chatConfigured, getAssistantDiagnostics } from "../chat/assistant.js";
 
 const router = express.Router();
 
@@ -32,6 +32,13 @@ const FRIENDLY = {
 function sseSend(res, event, data) {
   res.write(`event: ${event}\ndata: ${JSON.stringify(data)}\n\n`);
 }
+
+// GET /api/assistant/diagnostics — model chain + recent attempt timings.
+// Metadata only (no message content, no keys). Useful for verifying which
+// model served a request and how long it took.
+router.get("/diagnostics", (_req, res) => {
+  res.json(getAssistantDiagnostics());
+});
 
 router.post("/stream", async (req, res) => {
   if (!chatConfigured()) {
