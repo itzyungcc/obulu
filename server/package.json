@@ -11,7 +11,7 @@
   "name": "obulu-server",
   "scripts": {
     "start": "node src/index.js",
-    "test": "node test/model.test.js && node test/automation.test.js && node test/calendar.test.js && node test/live.test.js && node test/sportybet.test.js && node test/sportybet-booking.test.js && node test/assistant.test.js && node test/turso-fk.test.js && node test/telegram-subscribers.test.js"
+    "test": "node test/model.test.js && node test/automation.test.js && node test/calendar.test.js && node test/live.test.js && node test/sportybet.test.js && node test/sportybet-booking.test.js && node test/assistant.test.js && node test/turso-fk.test.js && node test/turso-schema-coverage.test.js && node test/telegram-subscribers.test.js"
   },
   "type": "module",
   "version": "1.0.0"

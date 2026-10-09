@@ -42,7 +42,11 @@ const SCHEMA_FILES = [
   "automation-schema.sql",
   "calendar-schema.sql",
   "sportybet-schema.sql",
+  "telegram-schema.sql",
 ];
+
+// Exported for the schema-coverage regression test.
+export { DURABLE_TABLES, SCHEMA_FILES };
 
 const PUSH_DEBOUNCE_MS = 30_000;
 const PUSH_INTERVAL_MS = 15 * 60_000;
