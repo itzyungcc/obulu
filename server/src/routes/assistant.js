@@ -5,7 +5,7 @@
 //   event: error  data: {"code":"...","message":"..."}
 // The Gemini key never leaves the server.
 import express from "express";
-import { assistantReplyStream, chatConfigured, getAssistantDiagnostics } from "../chat/assistant.js";
+import { assistantReplyStream, chatConfigured, getAssistantDiagnostics, listAvailableModels } from "../chat/assistant.js";
 
 const router = express.Router();
 
@@ -38,6 +38,16 @@ function sseSend(res, event, data) {
 // model served a request and how long it took.
 router.get("/diagnostics", (_req, res) => {
   res.json(getAssistantDiagnostics());
+});
+
+// GET /api/assistant/models — model IDs available to the server's API key.
+// Names only; the key never leaves the server.
+router.get("/models", async (_req, res) => {
+  try {
+    res.json({ models: await listAvailableModels() });
+  } catch (e) {
+    res.status(502).json({ error: e.code || "UPSTREAM", message: "Could not list models." });
+  }
 });
 
 router.post("/stream", async (req, res) => {

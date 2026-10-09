@@ -271,7 +271,10 @@ export async function chatReplyStream({ systemData, history = [], userMessage, o
           continue;
         }
         // Model missing / bad request: fall through to next model immediately.
-        if (category === "MODEL_NOT_FOUND" || category === "BAD_REQUEST") continue;
+        if (category === "MODEL_NOT_FOUND" || category === "BAD_REQUEST") {
+          logAttempt({ model, attempt, outcome: category.toLowerCase(), totalMs: Date.now() - startedAt });
+          continue;
+        }
         if (TRANSIENT.has(category) && attempt < MAX_ATTEMPTS) {
           await sleep(RETRY_DELAYS_MS[attempt - 1] || 2000);
           continue;
@@ -406,6 +409,37 @@ export function getAssistantDiagnostics() {
     models: assistantModels(),
     recentAttempts: [...recentAttempts].reverse(),
   };
+}
+
+// Lists models available to the configured API key (names only; the key is
+// never exposed). Used to pick a working model when the chain 404s.
+export async function listAvailableModels() {
+  const key = process.env.GEMINI_API_KEY;
+  if (!key) {
+    const err = new Error("CHAT_NOT_CONFIGURED");
+    err.code = "CHAT_NOT_CONFIGURED";
+    throw err;
+  }
+  const ctrl = new AbortController();
+  const timer = setTimeout(() => ctrl.abort(), 15000);
+  try {
+    const res = await fetch(
+      `https://generativelanguage.googleapis.com/v1beta/models?key=${key}`,
+      { signal: ctrl.signal }
+    );
+    const data = await res.json().catch(() => ({}));
+    if (!res.ok) {
+      const err = new Error(data?.error?.message || `HTTP ${res.status}`);
+      err.code = classifyError(res.status, "");
+      throw err;
+    }
+    return (data.models || [])
+      .map((m) => String(m.name || "").replace(/^models\//, ""))
+      .filter(Boolean)
+      .sort();
+  } finally {
+    clearTimeout(timer);
+  }
 }
 
 // ---------------------------------------------------------------------------
