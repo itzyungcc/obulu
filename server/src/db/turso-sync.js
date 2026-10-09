@@ -29,6 +29,8 @@ const DURABLE_TABLES = [
   "automation_results",
   "automation_config",
   "sportybet_bookings",
+  "telegram_subscribers",
+  "telegram_update_state",
   "fixtures",
   "leagues",
   "teams",

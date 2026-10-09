@@ -116,18 +116,58 @@ async function sendTelegram({ botToken, chatId, text }) {
 }
 
 // Sends the cumulative run message (all tips + the one booking code) via
-// Telegram. Telegram-only by design; the per-game details already live in
-// the in-app feed.
+// Telegram to the owner AND every active bot subscriber (/start). Telegram-
+// only by design; the per-game details already live in the in-app feed.
+// A 403 "blocked" response deactivates that subscriber so future runs skip
+// them. Never throws.
 export async function notifyRun({ config, games, booking }) {
   const text = formatRunMessage({ games, booking });
-  const results = {};
-  results.telegram = await sendTelegram({
-    botToken: config.telegramBotToken,
-    chatId: config.telegramChatId,
-    text: text.replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;"),
-  }).catch((e) => ({ ok: false, reason: e.message }));
-  if (!results.telegram.ok && !results.telegram.skipped) {
-    log(`run telegram send failed (token ${mask(config.telegramBotToken)}): ${results.telegram.reason}`);
+  const safe = text.replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;");
+  const results = { telegram: { ok: true, sent: 0, failed: 0, skipped: false } };
+
+  if (!config.telegramBotToken) {
+    results.telegram = { ok: false, skipped: true, reason: "telegram not configured" };
+    return results;
   }
+
+  let chatIds = [String(config.telegramChatId || "").trim()].filter(Boolean);
+  try {
+    const { getBroadcastChatIds } = await import("../telegram/subscribers.js");
+    chatIds = getBroadcastChatIds(config.telegramChatId);
+  } catch (e) {
+    log(`subscriber list unavailable, owner only: ${e.message}`);
+  }
+  if (!chatIds.length) {
+    results.telegram = { ok: false, skipped: true, reason: "no recipients" };
+    return results;
+  }
+
+  for (const chatId of chatIds) {
+    try {
+      const r = await sendTelegram({ botToken: config.telegramBotToken, chatId, text: safe });
+      if (r.ok) {
+        results.telegram.sent++;
+      } else if (!r.skipped) {
+        results.telegram.failed++;
+        const reason = String(r.reason || "");
+        if (/blocked|deactivated|kicked/i.test(reason)) {
+          try {
+            const { deactivate } = await import("../telegram/subscribers.js");
+            deactivate(chatId);
+            log(`deactivated blocked subscriber ${chatId}`);
+          } catch { /* best effort */ }
+        } else {
+          log(`run telegram send failed for ${chatId} (token ${mask(config.telegramBotToken)}): ${r.reason}`);
+        }
+      }
+    } catch (e) {
+      results.telegram.failed++;
+      log(`run telegram send threw for ${chatId}: ${e.message}`);
+    }
+    // Gentle pacing for Telegram's rate limits (~30 msg/s to distinct chats).
+    await new Promise((r) => setTimeout(r, 120));
+  }
+  results.telegram.ok = results.telegram.failed === 0;
+  log(`run broadcast: ${results.telegram.sent} sent, ${results.telegram.failed} failed (${chatIds.length} recipients)`);
   return results;
 }

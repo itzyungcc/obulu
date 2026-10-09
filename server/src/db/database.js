@@ -76,6 +76,25 @@ try {
   console.error("[db] sportybet schema migration failed:", e.message);
 }
 
+// Telegram broadcast subscribers: applied as a migration on existing
+// databases (same pattern as sportybet-schema.sql).
+try {
+  const hasTg = db
+    .prepare(
+      "SELECT name FROM sqlite_master WHERE type='table' AND name='telegram_subscribers'"
+    )
+    .get();
+  if (!hasTg) {
+    const tgSchema = fs.readFileSync(
+      path.join(__dirname, "telegram-schema.sql"),
+      "utf8"
+    );
+    db.exec(tgSchema);
+  }
+} catch (e) {
+  console.error("[db] telegram schema migration failed:", e.message);
+}
+
 export { db };
 
 export function closeDb() {

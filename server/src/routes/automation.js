@@ -57,6 +57,11 @@ router.get(
          WHERE notification_type = 'in_app' AND read_at IS NULL`
       )
       .get();
+    let telegramSubscribers = 0;
+    try {
+      const { subscriberCount } = await import("../telegram/subscribers.js");
+      telegramSubscribers = subscriberCount();
+    } catch { /* table may not exist yet on very old DBs */ }
     res.json({
       enabled: config.enabled,
       dryRun: config.dryRun,
@@ -64,6 +69,7 @@ router.get(
       intervalMinutes: config.intervalMinutes,
       lastRun,
       unreadNotifications: unread?.c ?? 0,
+      telegramSubscribers,
     });
   })
 );

@@ -13,6 +13,7 @@ import { startScheduler, stopScheduler } from "./automation/scheduler.js";
 import { startResolver, stopResolver } from "./calendar/resolver.js";
 import { startLiveEngine, stopLiveEngine } from "./live/engine.js";
 import { closeDb, db } from "./db/database.js";
+import { startSubscriberPoller, stopSubscriberPoller } from "./telegram/subscribers.js";
 import { pushToTurso, stopPeriodicPush } from "./db/turso-sync.js";
 
 const app = express();
@@ -66,6 +67,7 @@ const server = app.listen(config.port, () => {
   startScheduler();
   startResolver();
   startLiveEngine();
+  startSubscriberPoller();
 });
 
 function shutdown(signal) {
@@ -73,6 +75,7 @@ function shutdown(signal) {
   stopScheduler();
   stopResolver();
   stopLiveEngine();
+  stopSubscriberPoller();
   stopPeriodicPush();
   server.close(async () => {
     try {
