@@ -20,7 +20,7 @@
 import { getProvider } from "../providers/index.js";
 import { db } from "../db/database.js";
 
-const MODEL_CHAIN = (process.env.GEMINI_MODEL || "gemini-flash-latest,gemini-2.5-flash")
+const MODEL_CHAIN = (process.env.GEMINI_MODEL || "gemini-3.5-flash-lite,gemini-flash-latest")
   .split(",")
   .map((m) => m.trim())
   .filter(Boolean);
