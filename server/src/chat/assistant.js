@@ -1,7 +1,12 @@
-// OBULU AI — Gemini-powered assistant, rebuilt for reliability.
+// OBULU AI — multi-provider assistant (Groq primary, Gemini fallback).
 //
 // Architecture: browser -> POST /api/assistant/stream (SSE) -> this module
-// -> Gemini streamGenerateContent. The API key never leaves the server.
+// -> provider streamGenerateContent. The API key never leaves the server.
+//
+// Provider selection: ASSISTANT_PROVIDER=groq|gemini. Default: groq when
+// GROQ_API_KEY is set, else gemini when GEMINI_API_KEY is set.
+// Model chains: GROQ_MODEL (default llama-3.3-70b-versatile),
+// GEMINI_MODEL (default "gemini-3.5-flash-lite,gemini-flash-latest").
 //
 // Reliability design:
 // - Streaming: first token is forwarded immediately; the UI never stares at
@@ -20,10 +25,29 @@
 import { getProvider } from "../providers/index.js";
 import { db } from "../db/database.js";
 
-const MODEL_CHAIN = (process.env.GEMINI_MODEL || "gemini-3.5-flash-lite,gemini-flash-latest")
+// ---------------------------------------------------------------------------
+// Provider selection
+// ---------------------------------------------------------------------------
+
+function activeProvider() {
+  const explicit = (process.env.ASSISTANT_PROVIDER || "").trim().toLowerCase();
+  if (explicit === "groq" || explicit === "gemini") return explicit;
+  if (process.env.GROQ_API_KEY) return "groq";
+  return "gemini";
+}
+
+const GROQ_MODEL_CHAIN = (process.env.GROQ_MODEL || "openai/gpt-oss-120b")
   .split(",")
   .map((m) => m.trim())
   .filter(Boolean);
+
+const GEMINI_MODEL_CHAIN = (process.env.GEMINI_MODEL || "gemini-3.5-flash-lite,gemini-flash-latest")
+  .split(",")
+  .map((m) => m.trim())
+  .filter(Boolean);
+
+const GROQ_CHAT_URL = "https://api.groq.com/openai/v1/chat/completions";
+const GROQ_MODELS_URL = "https://api.groq.com/openai/v1/models";
 
 const GEMINI_STREAM_URL = (key, model) =>
   `https://generativelanguage.googleapis.com/v1beta/models/${model}:streamGenerateContent?alt=sse&key=${key}`;
@@ -36,11 +60,17 @@ const MAX_ATTEMPTS = 2; // 1 initial + 1 retry (worst case ~81s < 90s frontend c
 const RETRY_DELAYS_MS = [1000];
 
 export function chatConfigured() {
+  const p = activeProvider();
+  if (p === "groq") return Boolean(process.env.GROQ_API_KEY);
   return Boolean(process.env.GEMINI_API_KEY);
 }
 
+export function assistantProvider() {
+  return activeProvider();
+}
+
 export function assistantModels() {
-  return [...MODEL_CHAIN];
+  return activeProvider() === "groq" ? [...GROQ_MODEL_CHAIN] : [...GEMINI_MODEL_CHAIN];
 }
 
 // ---------------------------------------------------------------------------
@@ -209,12 +239,199 @@ function sseTextDelta(data) {
 }
 
 /**
- * Stream a Gemini reply. Calls onToken(text) for each delta.
- * Resolves { text, model, firstTokenMs, totalMs } or throws a coded error:
- *   TIMEOUT | RATE_LIMITED | AUTH | UPSTREAM | EMPTY_RESPONSE | CANCELLED
+ * Stream a reply from the active provider. Calls onToken(text) for each delta.
+ * Resolves { text, model, provider, firstTokenMs, totalMs } or throws a coded
+ * error: TIMEOUT | RATE_LIMITED | AUTH | UPSTREAM | EMPTY_RESPONSE | CANCELLED
  * `signal` (AbortSignal) cancels the request -> throws CANCELLED.
  */
 export async function chatReplyStream({ systemData, history = [], userMessage, onToken, signal, timeouts = {} }) {
+  const provider = activeProvider();
+  if (provider === "groq") {
+    return chatReplyStreamGroq({ systemData, history, userMessage, onToken, signal, timeouts });
+  }
+  return chatReplyStreamGemini({ systemData, history, userMessage, onToken, signal, timeouts });
+}
+
+// Build OpenAI-style messages for Groq from OBULU context.
+function buildGroqMessages(systemData, history, userMessage) {
+  const messages = [
+    { role: "system", content: SYSTEM_PROMPT + systemData },
+    ...history.slice(-8).map((m) => ({
+      role: m.role === "assistant" ? "assistant" : "user",
+      content: String(m.text || "").slice(0, 2000),
+    })),
+    { role: "user", content: userMessage },
+  ];
+  return messages;
+}
+
+// Parse one OpenAI-compatible SSE data payload into text delta ("" if none).
+function openaiSseTextDelta(data) {
+  try {
+    const json = JSON.parse(data);
+    const delta = json.choices?.[0]?.delta?.content;
+    return typeof delta === "string" ? delta : "";
+  } catch {
+    return "";
+  }
+}
+
+async function chatReplyStreamGroq({ systemData, history = [], userMessage, onToken, signal, timeouts = {} }) {
+  const key = process.env.GROQ_API_KEY;
+  if (!key) {
+    const err = new Error("CHAT_NOT_CONFIGURED");
+    err.code = "CHAT_NOT_CONFIGURED";
+    throw err;
+  }
+  const firstTokenTimeout = timeouts.firstTokenMs ?? FIRST_TOKEN_TIMEOUT_MS;
+  const totalTimeout = timeouts.totalMs ?? TOTAL_TIMEOUT_MS;
+  const startedAt = Date.now();
+  let lastErr = null;
+
+  for (let attempt = 1; attempt <= MAX_ATTEMPTS; attempt++) {
+    const model = GROQ_MODEL_CHAIN[(attempt - 1) % GROQ_MODEL_CHAIN.length];
+    const payload = {
+      model,
+      messages: buildGroqMessages(systemData, history, userMessage),
+      stream: true,
+      max_tokens: 500,
+      temperature: 0.4,
+    };
+    const ctrl = new AbortController();
+    const onAbort = () => ctrl.abort();
+    if (signal) {
+      if (signal.aborted) {
+        const err = new Error("CANCELLED");
+        err.code = "CANCELLED";
+        throw err;
+      }
+      signal.addEventListener("abort", onAbort, { once: true });
+    }
+    const firstTokenTimer = setTimeout(() => ctrl.abort(), firstTokenTimeout);
+    const totalTimer = setTimeout(() => ctrl.abort(), totalTimeout);
+    let firstTokenAt = 0;
+
+    try {
+      const res = await fetch(GROQ_CHAT_URL, {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+          Authorization: `Bearer ${key}`,
+        },
+        body: JSON.stringify(payload),
+        signal: ctrl.signal,
+      });
+
+      if (!res.ok || !res.body) {
+        const t = await res.text().catch(() => "");
+        const category = classifyError(res.status, t);
+        lastErr = new Error(`Groq ${res.status} on ${model}`);
+        lastErr.code = category;
+        lastErr.status = res.status;
+        if (category === "MODEL_NOT_FOUND" || category === "BAD_REQUEST") {
+          logAttempt({ model, attempt, outcome: category.toLowerCase(), totalMs: Date.now() - startedAt });
+          continue;
+        }
+        if (TRANSIENT.has(category) && attempt < MAX_ATTEMPTS) {
+          await sleep(RETRY_DELAYS_MS[attempt - 1] || 2000);
+          continue;
+        }
+        throw lastErr;
+      }
+
+      // Stream SSE chunks (OpenAI format).
+      const reader = res.body.getReader();
+      const decoder = new TextDecoder();
+      let buffer = "";
+      let fullText = "";
+      let gotToken = false;
+
+      for (;;) {
+        const { done, value } = await reader.read();
+        if (done) break;
+        buffer += decoder.decode(value, { stream: true });
+        const lines = buffer.split("\n");
+        buffer = lines.pop() || "";
+        for (const line of lines) {
+          const trimmed = line.trim();
+          if (!trimmed.startsWith("data:")) continue;
+          const data = trimmed.slice(5).trim();
+          if (!data || data === "[DONE]") continue;
+          const delta = openaiSseTextDelta(data);
+          if (delta) {
+            if (!gotToken) {
+              gotToken = true;
+              firstTokenAt = Date.now();
+              clearTimeout(firstTokenTimer);
+            }
+            fullText += delta;
+            if (onToken) onToken(delta);
+          }
+        }
+        if (signal?.aborted) {
+          try { await reader.cancel(); } catch { /* ignore */ }
+          const err = new Error("CANCELLED");
+          err.code = "CANCELLED";
+          throw err;
+        }
+      }
+
+      const text = fullText.trim();
+      if (!text) {
+        lastErr = new Error("EMPTY_RESPONSE");
+        lastErr.code = "EMPTY_RESPONSE";
+        if (attempt < MAX_ATTEMPTS) {
+          await sleep(RETRY_DELAYS_MS[attempt - 1] || 2000);
+          continue;
+        }
+        throw lastErr;
+      }
+      const totalMs = Date.now() - startedAt;
+      logAttempt({ model, attempt, outcome: "ok", firstTokenMs: firstTokenAt ? firstTokenAt - startedAt : null, totalMs });
+      return { text, model, provider: "groq", firstTokenMs: firstTokenAt ? firstTokenAt - startedAt : null, totalMs };
+    } catch (e) {
+      throw normalizeStreamError(e, { model, attempt, startedAt, signal });
+    } finally {
+      clearTimeout(firstTokenTimer);
+      clearTimeout(totalTimer);
+      if (signal) signal.removeEventListener("abort", onAbort);
+    }
+  }
+  throw lastErr || Object.assign(new Error("UPSTREAM"), { code: "UPSTREAM" });
+}
+
+// Shared error normalization for streaming attempts.
+function normalizeStreamError(e, { model, attempt, startedAt, signal }) {
+  if (e.code === "CANCELLED" || signal?.aborted) {
+    const err = new Error("CANCELLED");
+    err.code = "CANCELLED";
+    throw err;
+  }
+  if (
+    e.code === "EMPTY_RESPONSE" ||
+    e.code === "AUTH" ||
+    e.code === "MODEL_NOT_FOUND" ||
+    e.code === "BAD_REQUEST"
+  ) {
+    logAttempt({ model, attempt, outcome: e.code.toLowerCase(), totalMs: Date.now() - startedAt });
+    throw e;
+  }
+  const category =
+    typeof e.code === "string" && TRANSIENT.has(e.code)
+      ? e.code
+      : /abort/i.test(e.name || "")
+        ? "TIMEOUT"
+        : "NETWORK";
+  const lastErr = Object.assign(new Error(e.message || "request failed"), { code: category });
+  if (e.status) lastErr.status = e.status;
+  logAttempt({ model, attempt, outcome: category.toLowerCase(), totalMs: Date.now() - startedAt });
+  if (category === "TIMEOUT") lastErr.code = "TIMEOUT";
+  else if (category === "RATE_LIMITED") lastErr.code = "RATE_LIMITED";
+  else if (category === "UPSTREAM_5XX" || category === "NETWORK") lastErr.code = "UPSTREAM";
+  throw lastErr;
+}
+
+async function chatReplyStreamGemini({ systemData, history = [], userMessage, onToken, signal, timeouts = {} }) {
   const key = process.env.GEMINI_API_KEY;
   if (!key) {
     const err = new Error("CHAT_NOT_CONFIGURED");
@@ -229,7 +446,7 @@ export async function chatReplyStream({ systemData, history = [], userMessage, o
   const thinkingStripped = new Set();
 
   for (let attempt = 1; attempt <= MAX_ATTEMPTS; attempt++) {
-    const model = MODEL_CHAIN[(attempt - 1) % MODEL_CHAIN.length];
+    const model = GEMINI_MODEL_CHAIN[(attempt - 1) % GEMINI_MODEL_CHAIN.length];
     // Build the payload per attempt: the thinking field depends on the model.
     const payload = buildPayload(systemData, history, userMessage, model);
     if (thinkingStripped.has(model)) delete payload.generationConfig.thinkingConfig;
@@ -332,43 +549,9 @@ export async function chatReplyStream({ systemData, history = [], userMessage, o
       }
       const totalMs = Date.now() - startedAt;
       logAttempt({ model, attempt, outcome: "ok", firstTokenMs: firstTokenAt ? firstTokenAt - startedAt : null, totalMs });
-      return { text, model, firstTokenMs: firstTokenAt ? firstTokenAt - startedAt : null, totalMs };
+      return { text, model, provider: "gemini", firstTokenMs: firstTokenAt ? firstTokenAt - startedAt : null, totalMs };
     } catch (e) {
-      if (e.code === "CANCELLED" || signal?.aborted) {
-        const err = new Error("CANCELLED");
-        err.code = "CANCELLED";
-        throw err;
-      }
-      // Terminal codes set deliberately upstream: pass through unchanged.
-      if (
-        e.code === "EMPTY_RESPONSE" ||
-        e.code === "AUTH" ||
-        e.code === "MODEL_NOT_FOUND" ||
-        e.code === "BAD_REQUEST"
-      ) {
-        logAttempt({ model, attempt, outcome: e.code.toLowerCase(), totalMs: Date.now() - startedAt });
-        throw e;
-      }
-      const category =
-        typeof e.code === "string" && TRANSIENT.has(e.code)
-          ? e.code
-          : /abort/i.test(e.name || "")
-            ? "TIMEOUT"
-            : "NETWORK";
-      // Never mutate the original error (e.g. DOMException.code is read-only).
-      lastErr = Object.assign(new Error(e.message || "request failed"), { code: category });
-      if (e.status) lastErr.status = e.status;
-      logAttempt({ model, attempt, outcome: category.toLowerCase(), totalMs: Date.now() - startedAt });
-      if (e.code === "MODEL_NOT_FOUND" || e.code === "BAD_REQUEST" || e.code === "AUTH") throw lastErr;
-      if (TRANSIENT.has(category) && attempt < MAX_ATTEMPTS) {
-        await sleep(RETRY_DELAYS_MS[attempt - 1] || 2000);
-        continue;
-      }
-      // Normalize to a small set of terminal codes.
-      if (category === "TIMEOUT") lastErr.code = "TIMEOUT";
-      else if (category === "RATE_LIMITED") lastErr.code = "RATE_LIMITED";
-      else if (category === "UPSTREAM_5XX" || category === "NETWORK") lastErr.code = "UPSTREAM";
-      throw lastErr;
+      throw normalizeStreamError(e, { model, attempt, startedAt, signal });
     } finally {
       clearTimeout(firstTokenTimer);
       clearTimeout(totalTimer);
@@ -414,15 +597,38 @@ export function getAssistantDiagnostics() {
 // Lists models available to the configured API key (names only; the key is
 // never exposed). Used to pick a working model when the chain 404s.
 export async function listAvailableModels() {
-  const key = process.env.GEMINI_API_KEY;
-  if (!key) {
-    const err = new Error("CHAT_NOT_CONFIGURED");
-    err.code = "CHAT_NOT_CONFIGURED";
-    throw err;
-  }
+  const provider = activeProvider();
   const ctrl = new AbortController();
   const timer = setTimeout(() => ctrl.abort(), 15000);
   try {
+    if (provider === "groq") {
+      const key = process.env.GROQ_API_KEY;
+      if (!key) {
+        const err = new Error("CHAT_NOT_CONFIGURED");
+        err.code = "CHAT_NOT_CONFIGURED";
+        throw err;
+      }
+      const res = await fetch(GROQ_MODELS_URL, {
+        headers: { Authorization: `Bearer ${key}` },
+        signal: ctrl.signal,
+      });
+      const data = await res.json().catch(() => ({}));
+      if (!res.ok) {
+        const err = new Error(data?.error?.message || `HTTP ${res.status}`);
+        err.code = classifyError(res.status, "");
+        throw err;
+      }
+      return (data.data || [])
+        .map((m) => String(m.id || ""))
+        .filter(Boolean)
+        .sort();
+    }
+    const key = process.env.GEMINI_API_KEY;
+    if (!key) {
+      const err = new Error("CHAT_NOT_CONFIGURED");
+      err.code = "CHAT_NOT_CONFIGURED";
+      throw err;
+    }
     const res = await fetch(
       `https://generativelanguage.googleapis.com/v1beta/models?key=${key}`,
       { signal: ctrl.signal }
