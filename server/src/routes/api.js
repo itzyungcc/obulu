@@ -381,6 +381,8 @@ async function computePrediction(provider, matchId) {
       confidence: result.confidence,
       factors: result.factors,
       disclaimer: DISCLAIMER,
+      markets: result.markets,
+      recommendedMarket: result.recommendedMarket,
     },
     model: {
       method: METHOD,
