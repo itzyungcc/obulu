@@ -11,9 +11,9 @@ import {
 } from "../admin/middleware.js";
 import { loadEffectiveConfig, MUTABLE_CONFIG_KEYS } from "../automation/automationConfig.js";
 import { startScheduler, stopScheduler, schedulerStatus } from "../automation/scheduler.js";
-import { startResolver, stopResolver } from "../calendar/resolver.js";
+import { startResolver, stopResolver, resolverStatus } from "../calendar/resolver.js";
 import { startLiveEngine, stopLiveEngine, getEngineStatus } from "../live/engine.js";
-import { startSubscriberPoller, stopSubscriberPoller } from "../telegram/subscribers.js";
+import { startSubscriberPoller, stopSubscriberPoller, pollerStatus } from "../telegram/subscribers.js";
 import { startOpenFootballSync, stopOpenFootballSync, syncStatus } from "../openfootball/sync.js";
 
 const router = Router();
@@ -219,6 +219,8 @@ function getJobStates() {
   try { states.scheduler = schedulerStatus().running; } catch { states.scheduler = null; }
   try { states.liveEngine = getEngineStatus()?.running ?? null; } catch { states.liveEngine = null; }
   try { states.openfootball = syncStatus()?.running ?? syncStatus(); } catch { states.openfootball = null; }
+  try { states.subscriberPoller = pollerStatus().running; } catch { states.subscriberPoller = null; }
+  try { states.resolver = resolverStatus().running; } catch { states.resolver = null; }
   return states;
 }
 

@@ -227,3 +227,7 @@ export function stopSubscriberPoller() {
     log("subscriber poller stopped");
   }
 }
+
+export function pollerStatus() {
+  return { running: Boolean(timer) };
+}

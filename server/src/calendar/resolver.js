@@ -106,3 +106,7 @@ export function stopResolver() {
     log("resolver stopped");
   }
 }
+
+export function resolverStatus() {
+  return { running: Boolean(timer) };
+}
