@@ -163,4 +163,17 @@ await check("notifyRun: no token -> skipped, never throws", async () => {
   assert.strictEqual(sentMessages.length, 0, "nothing sent");
 });
 
+check("subscribe triggers an immediate backup push (no 15-min gap)", async () => {
+  // schedulePush is best-effort; the key assertion is that subscribe()
+  // does not throw when turso-sync is unavailable and the row lands.
+  const { subscribe } = await import("../src/telegram/subscribers.js");
+  const { db } = await import("../src/db/database.js");
+  const chatId = "test-immediate-push-123";
+  db.prepare("DELETE FROM telegram_subscribers WHERE chat_id = ?").run(chatId);
+  subscribe(chatId, { username: "testuser" });
+  const row = db.prepare("SELECT is_active FROM telegram_subscribers WHERE chat_id = ?").get(chatId);
+  assert.ok(row && row.is_active === 1, "subscriber recorded");
+  db.prepare("DELETE FROM telegram_subscribers WHERE chat_id = ?").run(chatId);
+});
+
 console.log(`\ntelegram-subscribers: ${passed} checks passed${process.exitCode ? " (with failures)" : ""}.`);

@@ -8,6 +8,7 @@
 // needed). The update offset is persisted so restarts don't reprocess.
 
 import { db } from "../db/database.js";
+import { schedulePush } from "../db/turso-sync.js";
 
 const log = (...a) => console.log("[Telegram][subscribers]", ...a);
 
@@ -56,6 +57,9 @@ export function subscribe(chatId, { username = null, firstName = null } = {}) {
        unsubscribed_at = NULL,
        is_active = 1`
   ).run(String(chatId), username, firstName, now);
+  // Back up immediately: a redeploy before the next 15-min push would
+  // otherwise lose this subscriber (they got the welcome but no tips).
+  try { schedulePush(db, 2000); } catch { /* best effort */ }
 }
 
 export function unsubscribe(chatId) {
@@ -64,6 +68,7 @@ export function unsubscribe(chatId) {
      SET is_active = 0, unsubscribed_at = ?
      WHERE chat_id = ?`
   ).run(new Date().toISOString(), String(chatId));
+  try { schedulePush(db, 2000); } catch { /* best effort */ }
 }
 
 export function deactivate(chatId) {
