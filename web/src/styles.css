@@ -662,6 +662,11 @@ select:focus {
 .outcome.predicted .bar-fill {
   background: var(--gold);
 }
+/* Markets pick: dark-theme friendly highlight (gold border, not light bg). */
+.markets-block .outcome.predicted {
+  background: #1a1a1a;
+  border-color: var(--gold);
+}
 .confidence {
   margin: 1.25rem 0;
 }
