@@ -76,6 +76,16 @@ router.get(
 );
 
 // --------------------------------------------------------------- leagues ---
+// OpenFootball history status (observability for the nightly sync).
+router.get(
+  "/openfootball/status",
+  asyncHandler(async (_req, res) => {
+    const { syncStatus } = await import("../openfootball/sync.js");
+    const { historyCoverage } = await import("../openfootball/history.js");
+    res.json({ ...syncStatus(), teamsCovered: historyCoverage() });
+  })
+);
+
 router.get(
   "/leagues",
   requireProvider,
@@ -296,8 +306,8 @@ async function computePrediction(provider, matchId) {
   if (!match) return null;
 
   const [homeStats, awayStats] = await Promise.all([
-    provider2.getTeamStats(match.home.id, match.league.id),
-    provider2.getTeamStats(match.away.id, match.league.id),
+    provider2.getTeamStats(match.home.id, match.league.id, match.home.name),
+    provider2.getTeamStats(match.away.id, match.league.id, match.away.name),
   ]);
 
   // Best-effort auxiliaries: prediction must still work without them.

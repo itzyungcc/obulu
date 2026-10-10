@@ -9,7 +9,7 @@ import { cacheGet, cacheSet } from "../cache.js";
 import { dedup } from "../perf.js";
 import config from "../config.js";
 
-async function cachedTeamStats(provider, teamId, leagueId) {
+async function cachedTeamStats(provider, teamId, leagueId, teamName = null) {
   const key = `teamstats:${teamId}:${leagueId}`;
   const hit = cacheGet(key);
   if (hit) return hit;
@@ -17,7 +17,7 @@ async function cachedTeamStats(provider, teamId, leagueId) {
   return dedup(key, async () => {
     const hit2 = cacheGet(key);
     if (hit2) return hit2;
-    const stats = await provider.getTeamStats(teamId, leagueId);
+    const stats = await provider.getTeamStats(teamId, leagueId, teamName);
     cacheSet(key, stats, "teamStats");
     return stats;
   });
@@ -59,8 +59,8 @@ export async function analyzeFixture(fixture, opts = {}) {
   let homeStats, awayStats;
   try {
     [homeStats, awayStats] = await Promise.all([
-      cachedTeamStats(provider, match.home.id, match.league.id),
-      cachedTeamStats(provider, match.away.id, match.league.id),
+      cachedTeamStats(provider, match.home.id, match.league.id, match.home.name),
+      cachedTeamStats(provider, match.away.id, match.league.id, match.away.name),
     ]);
   } catch (e) {
     const err = new Error(`PREDICTION_FAILED: team stats failed: ${e.message}`);

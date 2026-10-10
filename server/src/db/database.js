@@ -95,6 +95,25 @@ try {
   console.error("[db] telegram schema migration failed:", e.message);
 }
 
+// OpenFootball historical results: applied as a migration on existing
+// databases (same pattern as the other *-schema.sql files).
+try {
+  const hasOfb = db
+    .prepare(
+      "SELECT name FROM sqlite_master WHERE type='table' AND name='openfootball_results'"
+    )
+    .get();
+  if (!hasOfb) {
+    const ofbSchema = fs.readFileSync(
+      path.join(__dirname, "openfootball-schema.sql"),
+      "utf8"
+    );
+    db.exec(ofbSchema);
+  }
+} catch (e) {
+  console.error("[db] openfootball schema migration failed:", e.message);
+}
+
 export { db };
 
 export function closeDb() {

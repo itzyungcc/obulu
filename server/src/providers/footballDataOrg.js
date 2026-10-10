@@ -288,7 +288,26 @@ function buildStats(teamId, matches) {
   };
 }
 
-export async function getTeamStats(teamId, leagueId) {
+export async function getTeamStats(teamId, leagueId, teamNameHint = null) {
+  // Prefer free local OpenFootball history when it has enough data for this
+  // team: zero provider quota burned. Falls back to the provider API.
+  if (teamNameHint) {
+    try {
+      const { getLocalTeamStats } = await import("../openfootball/history.js");
+      const local = getLocalTeamStats(teamNameHint, { limit: 10 });
+      if (local) {
+        // Best effort: enrich with league position from cached standings.
+        if (leagueId) {
+          try {
+            const st = await cachedStandings(leagueId);
+            const row = st[String(teamId)] || st[local.teamId];
+            if (row) { local.position = row.position; local.points = row.points; }
+          } catch { /* optional */ }
+        }
+        return local;
+      }
+    } catch { /* fall through to provider */ }
+  }
   const params = { status: "FINISHED", limit: 10 };
   if (leagueId) params.competitions = idOf(leagueId);
   const json = await req(`/teams/${idOf(teamId)}/matches`, params);

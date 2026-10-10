@@ -14,6 +14,7 @@ import { startResolver, stopResolver } from "./calendar/resolver.js";
 import { startLiveEngine, stopLiveEngine } from "./live/engine.js";
 import { closeDb, db } from "./db/database.js";
 import { startSubscriberPoller, stopSubscriberPoller } from "./telegram/subscribers.js";
+import { startOpenFootballSync, stopOpenFootballSync } from "./openfootball/sync.js";
 import { pushToTurso, stopPeriodicPush } from "./db/turso-sync.js";
 
 const app = express();
@@ -68,6 +69,7 @@ const server = app.listen(config.port, () => {
   startResolver();
   startLiveEngine();
   startSubscriberPoller();
+  startOpenFootballSync();
 });
 
 function shutdown(signal) {
@@ -76,6 +78,7 @@ function shutdown(signal) {
   stopResolver();
   stopLiveEngine();
   stopSubscriberPoller();
+  stopOpenFootballSync();
   stopPeriodicPush();
   server.close(async () => {
     try {

@@ -31,6 +31,8 @@ const DURABLE_TABLES = [
   "sportybet_bookings",
   "telegram_subscribers",
   "telegram_update_state",
+  "openfootball_results",
+  "openfootball_sync_state",
   "fixtures",
   "leagues",
   "teams",
@@ -43,6 +45,7 @@ const SCHEMA_FILES = [
   "calendar-schema.sql",
   "sportybet-schema.sql",
   "telegram-schema.sql",
+  "openfootball-schema.sql",
 ];
 
 // Exported for the schema-coverage regression test.
