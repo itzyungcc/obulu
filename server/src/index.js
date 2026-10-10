@@ -10,6 +10,7 @@ import assistantRouter from "./routes/assistant.js";
 import calendarRouter from "./routes/calendar.js";
 import liveRouter from "./routes/live.js";
 import { startScheduler, stopScheduler } from "./automation/scheduler.js";
+import { clearStaleRunLocks } from "./automation/runner.js";
 import { startResolver, stopResolver } from "./calendar/resolver.js";
 import { startLiveEngine, stopLiveEngine } from "./live/engine.js";
 import { closeDb, db } from "./db/database.js";
@@ -65,6 +66,7 @@ app.use((err, req, res, _next) => {
 
 const server = app.listen(config.port, () => {
   console.log(`obulu-api listening on port ${config.port}`);
+  clearStaleRunLocks();
   startScheduler();
   startResolver();
   startLiveEngine();

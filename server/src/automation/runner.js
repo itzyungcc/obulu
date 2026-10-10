@@ -18,6 +18,24 @@ import { sameTeam } from "./normalizer.js";
 
 const log = (...a) => console.log("[Automation]", ...a);
 
+// A run stuck in 'running' for longer than this is presumed dead (the
+// instance was redeployed or crashed mid-run). Without this, a stale lock
+// restored from backup would block the scheduler forever.
+const STALE_RUN_MS = 3 * 60 * 60 * 1000;
+
+// Mark any 'running' rows left by a previous instance as interrupted.
+// Called once at boot, before the scheduler starts.
+export function clearStaleRunLocks() {
+  try {
+    const res = db
+      .prepare("UPDATE automation_runs SET status = 'interrupted' WHERE status = 'running'")
+      .run();
+    if (res.changes > 0) log(`cleared ${res.changes} stale running lock(s)`);
+  } catch (e) {
+    log("clearStaleRunLocks failed:", e.message);
+  }
+}
+
 let inMemoryLock = false;
 
 function runId() {
@@ -133,11 +151,17 @@ export async function runAutomation({ manual = false, overrides = {} } = {}) {
     return { skipped: true, reason: "locked" };
   }
   const stale = db
-    .prepare("SELECT id FROM automation_runs WHERE status = 'running' LIMIT 1")
+    .prepare("SELECT id, started_at FROM automation_runs WHERE status = 'running' LIMIT 1")
     .get();
   if (stale) {
-    log(`run skipped: run ${stale.id} still marked running`);
-    return { skipped: true, reason: "locked" };
+    const ageMs = Date.now() - Date.parse(stale.started_at);
+    if (Number.isFinite(ageMs) && ageMs > STALE_RUN_MS) {
+      log(`run ${stale.id} stuck running for ${Math.round(ageMs / 60000)} min — treating as dead`);
+      db.prepare("UPDATE automation_runs SET status = 'interrupted' WHERE id = ?").run(stale.id);
+    } else {
+      log(`run skipped: run ${stale.id} still marked running`);
+      return { skipped: true, reason: "locked" };
+    }
   }
 
   inMemoryLock = true;

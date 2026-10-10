@@ -11,6 +11,8 @@ import {
 import { qualify } from "../src/automation/qualification.js";
 import { formatRunMessage } from "../src/automation/notifier.js";
 import { loadAutomationConfig } from "../src/automation/automationConfig.js";
+import { clearStaleRunLocks } from "../src/automation/runner.js";
+import { db } from "../src/db/database.js";
 
 let passed = 0;
 const pendingChecks = [];
@@ -287,4 +289,17 @@ check("matchFixture rejects non-NS statuses (incl. CANCELLED/POSTPONED/ABANDONED
 });
 
 await Promise.all(pendingChecks);
+
+check("clearStaleRunLocks marks orphaned running rows interrupted", () => {
+  const id = "test-stale-lock";
+  db.prepare("DELETE FROM automation_runs WHERE id = ?").run(id);
+  db.prepare(
+    "INSERT INTO automation_runs (id, started_at, status, dry_run) VALUES (?, ?, 'running', 1)"
+  ).run(id, new Date(Date.now() - 5 * 3600 * 1000).toISOString());
+  clearStaleRunLocks();
+  const row = db.prepare("SELECT status FROM automation_runs WHERE id = ?").get(id);
+  assert.strictEqual(row.status, "interrupted", "stale running row cleared");
+  db.prepare("DELETE FROM automation_runs WHERE id = ?").run(id);
+});
+
 console.log(`\nautomation: ${passed} checks passed${process.exitCode ? " (with failures)" : ""}.`);
