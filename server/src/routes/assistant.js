@@ -51,6 +51,16 @@ router.get("/models", async (_req, res) => {
 });
 
 router.post("/stream", async (req, res) => {
+  // Admin kill-switch: when disabled, return the same clean 503 shape the
+  // frontend already handles (no fake success, no provider call).
+  try {
+    const { getAdminSetting } = await import("./adminSettings.js");
+    if (getAdminSetting("assistantEnabled") === false) {
+      const msg = getAdminSetting("assistantMaintenanceMessage");
+      return res.status(503).json({ error: "CHAT_DISABLED", message: msg });
+    }
+  } catch { /* fail open: if settings unreadable, proceed to normal checks */ }
+
   if (!chatConfigured()) {
     return res.status(503).json({ error: "CHAT_NOT_CONFIGURED", message: FRIENDLY.CHAT_NOT_CONFIGURED });
   }

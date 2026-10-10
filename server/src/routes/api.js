@@ -13,6 +13,48 @@ import * as tursoSync from "../db/turso-sync.js";
 
 const router = Router();
 
+// Admin visibility: compare prediction confidence against the admin-
+// configured threshold. Returns { visible, suppressedReason } — the
+// prediction data is never deleted, only flagged.
+function adminVisibility(result) {
+  let threshold = 0;
+  let publishEnabled = true;
+  try {
+    const tRow = db.prepare("SELECT value FROM automation_config WHERE key = ?").get("admin:minConfidence");
+    if (tRow) threshold = Number(JSON.parse(tRow.value)) || 0;
+    const pRow = db.prepare("SELECT value FROM automation_config WHERE key = ?").get("admin:predictionPublishEnabled");
+    if (pRow) publishEnabled = JSON.parse(pRow.value) !== false;
+  } catch { /* defaults */ }
+  const score = Number(result?.confidence?.score) || 0;
+  if (!publishEnabled) {
+    return { visible: false, suppressedReason: "Publishing is disabled by the administrator." };
+  }
+  if (threshold > 0 && score < threshold) {
+    return {
+      visible: false,
+      suppressedReason: `Confidence ${Math.round(score)}% is below the ${Math.round(threshold)}% threshold.`,
+    };
+  }
+  return { visible: true, suppressedReason: null };
+}
+
+// Admin market filter: remove markets the admin has disabled. Returns the
+// filtered markets object (null if the input is null).
+function filterMarkets(markets) {
+  if (!markets || typeof markets !== "object") return markets;
+  let enabled = null;
+  try {
+    const row = db.prepare("SELECT value FROM automation_config WHERE key = ?").get("admin:enabledMarkets");
+    if (row) enabled = JSON.parse(row.value);
+  } catch { /* all enabled */ }
+  if (!Array.isArray(enabled)) return markets; // null/undefined = all enabled
+  const out = {};
+  for (const [k, v] of Object.entries(markets)) {
+    if (enabled.includes(k)) out[k] = v;
+  }
+  return out;
+}
+
 const asyncHandler = (fn) => (req, res, next) =>
   Promise.resolve(fn(req, res, next)).catch(next);
 
@@ -381,8 +423,12 @@ async function computePrediction(provider, matchId) {
       confidence: result.confidence,
       factors: result.factors,
       disclaimer: DISCLAIMER,
-      markets: result.markets,
+      markets: filterMarkets(result.markets),
       recommendedMarket: result.recommendedMarket,
+      // Admin visibility: predictions below the configured confidence
+      // threshold are flagged (not deleted) so the frontend can hide,
+      // label, or show them per admin policy.
+      ...adminVisibility(result),
     },
     model: {
       method: METHOD,

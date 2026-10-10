@@ -3,6 +3,8 @@ import express from "express";
 import config from "./config.js";
 import apiRouter from "./routes/api.js";
 import automationRouter from "./routes/automation.js";
+import adminRouter from "./routes/admin.js";
+import adminSettingsRouter from "./routes/adminSettings.js";
 import jackpotRouter from "./routes/jackpot.js";
 import sportybetRouter from "./routes/sportybet.js";
 import chatRouter from "./routes/chat.js";
@@ -22,8 +24,18 @@ const app = express();
 app.use(express.json());
 
 // Minimal CORS (single dependency: express).
+// Cookies need explicit origins (never "*") + credentials. The web frontend
+// origin comes from WEB_ORIGIN env; same-origin and curl keep working.
+const WEB_ORIGIN = (process.env.WEB_ORIGIN || "https://obulu.onrender.com").replace(/\/$/, "");
 app.use((req, res, next) => {
-  res.setHeader("Access-Control-Allow-Origin", "*");
+  const origin = req.headers.origin;
+  if (origin && (origin === WEB_ORIGIN || origin === "http://localhost:5173" || origin === "http://localhost:4173")) {
+    res.setHeader("Access-Control-Allow-Origin", origin);
+    res.setHeader("Access-Control-Allow-Credentials", "true");
+    res.setHeader("Vary", "Origin");
+  } else {
+    res.setHeader("Access-Control-Allow-Origin", "*");
+  }
   res.setHeader("Access-Control-Allow-Methods", "GET,POST,PUT,PATCH,DELETE,OPTIONS");
   res.setHeader("Access-Control-Allow-Headers", "Content-Type, Authorization, X-Admin-Key");
   if (req.method === "OPTIONS") return res.sendStatus(204);
@@ -41,8 +53,29 @@ app.get("/health", (req, res) =>
   res.json({ status: "ok", timestamp: new Date().toISOString() })
 );
 
+// Maintenance mode: when enabled via admin settings, all non-admin API
+// routes return 503 with the configured message. Admin routes and health
+// probes always bypass.
+app.use("/api", (req, res, next) => {
+  if (req.path.startsWith("/admin")) return next();
+  try {
+    const row = db.prepare("SELECT value FROM automation_config WHERE key = ?").get("admin:maintenanceMode");
+    if (row && JSON.parse(row.value) === true) {
+      let message = "OBULU is under maintenance. We'll be back shortly.";
+      try {
+        const mrow = db.prepare("SELECT value FROM automation_config WHERE key = ?").get("admin:maintenanceMessage");
+        if (mrow) message = JSON.parse(mrow.value) || message;
+      } catch { /* default */ }
+      return res.status(503).json({ error: "MAINTENANCE", message });
+    }
+  } catch { /* fail open: DB error should not take the site down */ }
+  next();
+});
+
 app.use("/api", apiRouter);
 app.use("/api", automationRouter);
+app.use("/api/admin", adminRouter);
+app.use("/api/admin", adminSettingsRouter);
 app.use("/api/jackpot", jackpotRouter);
 app.use("/api/sportybet", sportybetRouter);
 app.use("/api/chat", chatRouter);

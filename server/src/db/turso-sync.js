@@ -37,6 +37,10 @@ const DURABLE_TABLES = [
   "leagues",
   "teams",
   "results",
+  "admin_users",
+  "admin_sessions",
+  "admin_audit_log",
+  "admin_setup",
 ];
 
 const SCHEMA_FILES = [
@@ -46,6 +50,7 @@ const SCHEMA_FILES = [
   "sportybet-schema.sql",
   "telegram-schema.sql",
   "openfootball-schema.sql",
+  "admin-schema.sql",
 ];
 
 // Exported for the schema-coverage regression test.

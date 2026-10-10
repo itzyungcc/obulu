@@ -114,6 +114,25 @@ try {
   console.error("[db] openfootball schema migration failed:", e.message);
 }
 
+// Admin Control Center tables: applied as a migration on existing
+// databases (same pattern as the other *-schema.sql files).
+try {
+  const hasAdmin = db
+    .prepare(
+      "SELECT name FROM sqlite_master WHERE type='table' AND name='admin_users'"
+    )
+    .get();
+  if (!hasAdmin) {
+    const adminSchema = fs.readFileSync(
+      path.join(__dirname, "admin-schema.sql"),
+      "utf8"
+    );
+    db.exec(adminSchema);
+  }
+} catch (e) {
+  console.error("[db] admin schema migration failed:", e.message);
+}
+
 export { db };
 
 export function closeDb() {

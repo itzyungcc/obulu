@@ -15,6 +15,10 @@ import Disclaimer from "./pages/Disclaimer.jsx";
 import Automation from "./pages/Automation.jsx";
 import Jackpot from "./pages/Jackpot.jsx";
 import Chat from "./pages/Chat.jsx";
+import AdminLogin from "./pages/admin/Login.jsx";
+import AdminDashboard from "./pages/admin/Dashboard.jsx";
+import ProtectedRoute from "./admin/ProtectedRoute.jsx";
+import { AdminProvider } from "./admin/AdminContext.jsx";
 import FloatingAssistant from "./components/AiAssistant/FloatingAssistant.jsx";
 
 function ScrollToTop() {
@@ -27,7 +31,8 @@ function ScrollToTop() {
 
 export default function App() {
   return (
-    <div className="app">
+    <AdminProvider>
+      <div className="app">
       <Header />
       <main className="main-content">
         <ScrollToTop />
@@ -45,11 +50,21 @@ export default function App() {
           <Route path="/automation" element={<Automation />} />
           <Route path="/jackpot" element={<Jackpot />} />
           <Route path="/chat" element={<Chat />} />
+          <Route path="/admin/login" element={<AdminLogin />} />
+          <Route
+            path="/admin"
+            element={
+              <ProtectedRoute>
+                <AdminDashboard />
+              </ProtectedRoute>
+            }
+          />
           <Route path="*" element={<Home />} />
         </Routes>
       </main>
       <Footer />
       <FloatingAssistant />
-    </div>
+      </div>
+    </AdminProvider>
   );
 }
