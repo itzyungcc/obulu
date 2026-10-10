@@ -18,7 +18,7 @@ export const CACHE_TTLS = {
   odds: 30 * 60, // 30 min
   leagues: 24 * 3600, // 24 h
   live: 120, // 2 min — in-play data goes stale fast; key prefix "live:"
-  predictions: 6 * 3600, // 6 h — model outputs; inputs are teamStats(6h)/standings(6h)
+  predictions: 12 * 3600, // 12 h — model outputs; inputs change only when teams play (every few days)
   analysis: 30 * 60, // 30 min — composed match analysis payload
 };
 

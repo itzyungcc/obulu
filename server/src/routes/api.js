@@ -295,10 +295,9 @@ router.get(
 );
 
 // ------------------------------------------------------ matches prediction ---
-// The full prediction payload is cached (6h): the model inputs (team stats,
-// league averages) change slowly, so recalculating on every page view was
-// 6-7 football API calls for zero new information. Only a cache miss
-// recomputes; the predictions audit row + immutable calendar snapshot are
+// The full prediction payload is cached (12h): the model inputs (team form,
+// league averages) change only when teams play, so recalculating on every
+// page view was wasted work. Only a cache miss recomputes; the predictions audit row + immutable calendar snapshot are
 // written on recompute only (previously every view wrote a duplicate row).
 async function computePrediction(provider, matchId) {
   const provider2 = provider;
