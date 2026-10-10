@@ -342,29 +342,59 @@ function ordinal(n) {
   return s[(v - 20) % 10] || s[v] || s[0];
 }
 
-// Pick the strongest goals-market signal. Preference order favours the
-// markets the user asked for (overs, then combos, then BTTS), breaking
-// ties by probability. Returns { key, label, probability } or null.
+// Pick the smartest goals-market tip for this specific match — not just the
+// highest raw number. An "or" combo at 94% is a trivial tip, not a sharp one.
+// Logic:
+//   1. Sharp markets only (pure totals, BTTS, "&" combos) in the 55–88%
+//      sweet spot — strong signal, not a foregone conclusion.
+//   2. If none qualify, fall back to "or" combos in the sweet spot.
+//   3. Last resort: highest probability overall.
+// This way a 3-2 type game gets "Over 2.5", a 1-0 type game gets
+// "Under 2.5", and a mismatch gets "Home win & Over 2.5" — the market
+// fits the match profile instead of defaulting to the bluntest option.
 function pickRecommendedMarket(m) {
-  const candidates = [
+  const sweet = (p) => Number.isFinite(p) && p >= 55 && p <= 88;
+
+  const sharp = [
     ["over25", "Over 2.5"],
+    ["bttsYes", "Both teams to score"],
     ["over15", "Over 1.5"],
     ["over35", "Over 3.5"],
+    ["under25", "Under 2.5"],
+    ["homeAndOver25", "Home win & Over 2.5"],
+    ["awayAndOver25", "Away win & Over 2.5"],
+  ];
+  const blunt = [
     ["homeOrOver25", "Home win or Over 2.5"],
     ["awayOrOver25", "Away win or Over 2.5"],
     ["drawOrOver25", "Draw or Over 2.5"],
-    ["homeAndOver25", "Home win & Over 2.5"],
-    ["awayAndOver25", "Away win & Over 2.5"],
-    ["bttsYes", "Both teams to score"],
-    ["under25", "Under 2.5"],
   ];
-  let best = null;
-  for (const [key, label] of candidates) {
-    const p = m[key];
-    if (!Number.isFinite(p)) continue;
-    if (!best || p > best.probability) best = { key, label, probability: p };
-  }
-  return best;
+
+  const bestIn = (list) => {
+    let best = null;
+    for (const [key, label] of list) {
+      const p = m[key];
+      if (!sweet(p)) continue;
+      if (!best || p > best.probability) best = { key, label, probability: p };
+    }
+    return best;
+  };
+
+  return (
+    bestIn(sharp) ||
+    bestIn(blunt) ||
+    (() => {
+      // Last resort: highest of everything.
+      const all = [...sharp, ...blunt];
+      let best = null;
+      for (const [key, label] of all) {
+        const p = m[key];
+        if (!Number.isFinite(p)) continue;
+        if (!best || p > best.probability) best = { key, label, probability: p };
+      }
+      return best;
+    })()
+  );
 }
 
 // ---------------------------------------------------------------------------

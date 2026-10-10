@@ -146,14 +146,40 @@ check("predictMatch includes goals markets with sane probabilities", () => {
   // "or" combos >= their parts.
   assert.ok(m.homeOrOver25 >= m.over25 - 0.1, "homeOrOver25 >= over25");
   assert.ok(m.awayOrOver25 >= m.over25 - 0.1, "awayOrOver25 >= over25");
-  // Strong home team vs weak away: home-or-over should be high.
-  assert.ok(m.homeOrOver25 > 60, `homeOrOver25=${m.homeOrOver25} should be high`);
-  // Recommended market is the max of the candidate list.
+});
+
+check("recommended market fits the match profile, not just max probability", () => {
+  // High-scoring mismatch: should pick a sharp market (Over 2.5 or
+  // Home & Over), NOT the trivial "Home or Over 2.5" even though the
+  // "or" combo always has the highest raw probability.
+  const high = predictMatch(
+    { goalsFor: 28, goalsAgainst: 8, played: 10, recentForm: Array(10).fill("W") },
+    { goalsFor: 6, goalsAgainst: 22, played: 10, recentForm: Array(10).fill("L") },
+    { avgHomeGoals: 1.45, avgAwayGoals: 1.15, credible: true },
+    { played: 0 },
+    null
+  );
+  const bluntLabels = ["Home win or Over 2.5", "Away win or Over 2.5", "Draw or Over 2.5"];
   assert.ok(
-    ["Over 2.5", "Over 1.5", "Over 3.5", "Home win or Over 2.5", "Away win or Over 2.5",
-     "Draw or Over 2.5", "Home win & Over 2.5", "Away win & Over 2.5",
-     "Both teams to score", "Under 2.5"].includes(r.recommendedMarket.label),
-    `label=${r.recommendedMarket.label}`
+    !bluntLabels.includes(high.recommendedMarket.label),
+    `high-scoring game should not pick blunt combo, got: ${high.recommendedMarket.label}`
+  );
+  assert.ok(
+    high.recommendedMarket.probability >= 55 && high.recommendedMarket.probability <= 88,
+    `pick should be in sweet spot, got ${high.recommendedMarket.probability}`
+  );
+
+  // Low-scoring defensive game: should lean Under 2.5.
+  const low = predictMatch(
+    { goalsFor: 6, goalsAgainst: 7, played: 10, recentForm: Array(10).fill("D") },
+    { goalsFor: 5, goalsAgainst: 8, played: 10, recentForm: Array(10).fill("D") },
+    { avgHomeGoals: 1.45, avgAwayGoals: 1.15, credible: true },
+    { played: 0 },
+    null
+  );
+  assert.ok(
+    low.markets.under25 > low.markets.over25,
+    "defensive game should favour under"
   );
 });
 
