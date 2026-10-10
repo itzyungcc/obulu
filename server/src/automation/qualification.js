@@ -16,6 +16,15 @@ export function qualify({ prediction, match, config }) {
   const sorted = [...probs].sort((a, b) => b - a);
   const margin = sorted[0] - sorted[1];
 
+  // Best pick across 1X2 and goals markets. The model's recommended market
+  // (e.g. Over 2.5) can outrank a weak 1X2 signal — goals markets are
+  // often more workable than picking a winner.
+  const market = prediction.recommendedMarket;
+  const marketProb = market && Number.isFinite(market.probability) ? market.probability : 0;
+  const useMarket = marketProb > maxProb;
+  const pickProb = useMarket ? marketProb : maxProb;
+  const pickLabel = useMarket ? market.label : String(prediction.predictedOutcome || "").toUpperCase();
+
   // Confidence vs probability are different measures — check both explicitly.
   if (prediction.confidence < config.minConfidence) {
     fail(`confidence ${prediction.confidence.toFixed(1)} < ${config.minConfidence}`);
@@ -23,15 +32,15 @@ export function qualify({ prediction, match, config }) {
   if (prediction.dataCompleteness < config.minDataCompleteness) {
     fail(`data_completeness ${prediction.dataCompleteness.toFixed(1)} < ${config.minDataCompleteness}`);
   }
-  if (maxProb < config.minProbability) {
-    fail(`max_probability ${maxProb.toFixed(1)} < ${config.minProbability}`);
+  if (pickProb < config.minProbability) {
+    fail(`pick_probability ${pickProb.toFixed(1)} < ${config.minProbability}`);
   }
-  if (margin < config.minOutcomeMargin) {
+  if (!useMarket && margin < config.minOutcomeMargin) {
     fail(`outcome_margin ${margin.toFixed(1)} < ${config.minOutcomeMargin}`);
   }
 
   const outcome = String(prediction.predictedOutcome || "").toLowerCase();
-  if (!config.allowedOutcomes.includes(outcome)) {
+  if (!useMarket && !config.allowedOutcomes.includes(outcome)) {
     fail(`outcome '${outcome}' not in allowed [${config.allowedOutcomes.join(", ")}]`);
   }
 
@@ -79,5 +88,8 @@ export function qualify({ prediction, match, config }) {
     maxProbability: maxProb,
     outcomeMargin: margin,
     hoursUntilKickoff: hoursUntil,
+    pickProbability: pickProb,
+    pickLabel,
+    pickIsMarket: useMarket,
   };
 }

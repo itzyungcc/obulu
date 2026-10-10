@@ -28,9 +28,15 @@ export function formatRunMessage({ games, booking }) {
   list.forEach((g, i) => {
     const match = g.match || {};
     const prediction = g.prediction || {};
-    const pick = String(prediction.predictedOutcome || "").toUpperCase();
-    const pickName =
-      pick === "HOME"
+    const qual = g.qualification || {};
+    // Prefer the goals-market pick when the model ranked it above 1X2.
+    const isMarketPick = Boolean(qual.pickIsMarket);
+    const pick = isMarketPick
+      ? String(qual.pickLabel || "").toUpperCase()
+      : String(prediction.predictedOutcome || "").toUpperCase();
+    const pickName = isMarketPick
+      ? String(qual.pickLabel || "")
+      : pick === "HOME"
         ? match.home?.name
         : pick === "AWAY"
           ? match.away?.name

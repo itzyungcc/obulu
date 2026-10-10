@@ -76,6 +76,49 @@ export default function PredictionCard({
         </div>
       )}
 
+      {prediction.markets && (
+        <div className="markets-block">
+          <h3>Goals markets</h3>
+          {prediction.recommendedMarket && (
+            <p className="muted">
+              Recommended: <strong>{prediction.recommendedMarket.label}</strong> (
+              {Math.round(prediction.recommendedMarket.probability)}%)
+            </p>
+          )}
+          <div className="outcome-bars">
+            {[
+              ["Over 1.5", prediction.markets.over15],
+              ["Over 2.5", prediction.markets.over25],
+              ["Over 3.5", prediction.markets.over35],
+              ["Under 2.5", prediction.markets.under25],
+              ["BTTS", prediction.markets.bttsYes],
+              ["Home or Over 2.5", prediction.markets.homeOrOver25],
+              ["Away or Over 2.5", prediction.markets.awayOrOver25],
+            ]
+              .filter(([, v]) => Number.isFinite(v))
+              .map(([label, value]) => {
+                const isRec =
+                  prediction.recommendedMarket &&
+                  prediction.recommendedMarket.label === label;
+                return (
+                  <div key={label} className={`outcome${isRec ? " predicted" : ""}`}>
+                    <div className="outcome-row">
+                      <span className="outcome-label">
+                        {label}
+                        {isRec && <span className="badge badge-predicted">pick</span>}
+                      </span>
+                      <span className="outcome-pct">{Math.round(value)}%</span>
+                    </div>
+                    <div className="bar-track">
+                      <div className="bar-fill" style={{ width: `${clamp(value)}%` }} />
+                    </div>
+                  </div>
+                );
+              })}
+          </div>
+        </div>
+      )}
+
       {Array.isArray(prediction.factors) && prediction.factors.length > 0 && (
         <div className="factors-block">
           <h3>Why this prediction</h3>

@@ -408,6 +408,7 @@ async function processOne({ id: runId, norm, config, counts, getAlertsToday, bum
     prediction: p,
     modelVersion: analysis.modelVersion,
     selection: selection || null,
+    qualification: q,
   });
 
   const now = new Date().toISOString();

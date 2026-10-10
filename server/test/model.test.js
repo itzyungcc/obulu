@@ -125,4 +125,36 @@ check("dataCompleteness uses actual recentForm length, not played counter (§24)
   );
 });
 
+check("predictMatch includes goals markets with sane probabilities", () => {
+  const r = predictMatch(
+    { goalsFor: 20, goalsAgainst: 10, played: 10, recentForm: ["W", "W", "D", "W", "L"] },
+    { goalsFor: 8, goalsAgainst: 18, played: 10, recentForm: ["L", "L", "D", "L", "W"] },
+    { avgHomeGoals: 1.45, avgAwayGoals: 1.15, credible: true },
+    { played: 0 },
+    null
+  );
+  assert.ok(r.markets, "markets present");
+  assert.ok(r.recommendedMarket, "recommended market present");
+  const m = r.markets;
+  // Over/under are complementary.
+  assert.ok(Math.abs(m.over25 + m.under25 - 100) < 0.1, "over25+under25=100");
+  assert.ok(Math.abs(m.over15 + m.under15 - 100) < 0.1, "over15+under15=100");
+  // Monotonic: over 1.5 >= over 2.5 >= over 3.5.
+  assert.ok(m.over15 >= m.over25 && m.over25 >= m.over35, "totals monotonic");
+  // BTTS complementary.
+  assert.ok(Math.abs(m.bttsYes + m.bttsNo - 100) < 0.1, "btts sums to 100");
+  // "or" combos >= their parts.
+  assert.ok(m.homeOrOver25 >= m.over25 - 0.1, "homeOrOver25 >= over25");
+  assert.ok(m.awayOrOver25 >= m.over25 - 0.1, "awayOrOver25 >= over25");
+  // Strong home team vs weak away: home-or-over should be high.
+  assert.ok(m.homeOrOver25 > 60, `homeOrOver25=${m.homeOrOver25} should be high`);
+  // Recommended market is the max of the candidate list.
+  assert.ok(
+    ["Over 2.5", "Over 1.5", "Over 3.5", "Home win or Over 2.5", "Away win or Over 2.5",
+     "Draw or Over 2.5", "Home win & Over 2.5", "Away win & Over 2.5",
+     "Both teams to score", "Under 2.5"].includes(r.recommendedMarket.label),
+    `label=${r.recommendedMarket.label}`
+  );
+});
+
 console.log(`\n${passed} tests passed${process.exitCode ? " (with failures)" : ""}.`);

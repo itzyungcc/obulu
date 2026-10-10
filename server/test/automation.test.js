@@ -140,7 +140,7 @@ check("qualification rejects low max probability", () => {
     config: baseConfig(),
   });
   assert.ok(!q.qualified);
-  assert.ok(q.reasons.some((r) => r.includes("max_probability")));
+  assert.ok(q.reasons.some((r) => r.includes("pick_probability")));
 });
 
 check("qualification rejects small outcome margin", () => {
@@ -289,6 +289,22 @@ check("matchFixture rejects non-NS statuses (incl. CANCELLED/POSTPONED/ABANDONED
 });
 
 await Promise.all(pendingChecks);
+
+check("qualification prefers strong goals market over weak 1X2", () => {
+  const q = qualify({
+    prediction: basePrediction({
+      homeWin: 40, draw: 30, awayWin: 30, confidence: 90,
+      predictedOutcome: "home",
+      recommendedMarket: { key: "over25", label: "Over 2.5", probability: 72 },
+    }),
+    match: baseMatch(),
+    config: baseConfig(),
+  });
+  assert.ok(q.qualified, `should qualify via market: ${q.reasons.join("; ")}`);
+  assert.strictEqual(q.pickIsMarket, true);
+  assert.strictEqual(q.pickLabel, "Over 2.5");
+  assert.strictEqual(q.pickProbability, 72);
+});
 
 check("clearStaleRunLocks marks orphaned running rows interrupted", () => {
   const id = "test-stale-lock";

@@ -167,7 +167,53 @@ function scoreProbabilities(xgHome, xgAway) {
       else pAway += q;
     }
   }
-  return { pHome, pDraw, pAway };
+  return { pHome, pDraw, pAway, matrix: m, matrixTotal: total };
+}
+
+// Goals markets derived from the scoreline matrix. All probabilities are
+// 0..1. Lines: over/under 1.5, 2.5, 3.5; BTTS; and combo markets
+// ("1 & Over 2.5", "1 or Over 2.5", etc.).
+function goalsMarkets(sc) {
+  const { matrix: m, matrixTotal: total } = sc;
+  const q = (i, j) => m[i][j] / total;
+
+  const totals = {};
+  for (const line of [1.5, 2.5, 3.5]) {
+    let over = 0;
+    for (let i = 0; i <= MAX_GOALS; i++)
+      for (let j = 0; j <= MAX_GOALS; j++)
+        if (i + j > line) over += q(i, j);
+    totals[`over${line}`] = over;
+    totals[`under${line}`] = 1 - over;
+  }
+
+  let bttsYes = 0;
+  for (let i = 1; i <= MAX_GOALS; i++)
+    for (let j = 1; j <= MAX_GOALS; j++) bttsYes += q(i, j);
+
+  // Combo markets.
+  let homeAndOver25 = 0, awayAndOver25 = 0, drawAndOver25 = 0;
+  for (let i = 0; i <= MAX_GOALS; i++) {
+    for (let j = 0; j <= MAX_GOALS; j++) {
+      if (i + j < 3) continue; // under 2.5
+      const p = q(i, j);
+      if (i > j) homeAndOver25 += p;
+      else if (i === j) drawAndOver25 += p;
+      else awayAndOver25 += p;
+    }
+  }
+  const over25 = totals["over2.5"];
+  return {
+    over15: totals["over1.5"], under15: totals["under1.5"],
+    over25, under25: totals["under2.5"],
+    over35: totals["over3.5"], under35: totals["under3.5"],
+    bttsYes, bttsNo: 1 - bttsYes,
+    homeAndOver25, awayAndOver25, drawAndOver25,
+    // "or" combos via inclusion–exclusion.
+    homeOrOver25: sc.pHome + over25 - homeAndOver25,
+    awayOrOver25: sc.pAway + over25 - awayAndOver25,
+    drawOrOver25: sc.pDraw + over25 - drawAndOver25,
+  };
 }
 
 // ---------------------------------------------------------------------------
@@ -296,6 +342,31 @@ function ordinal(n) {
   return s[(v - 20) % 10] || s[v] || s[0];
 }
 
+// Pick the strongest goals-market signal. Preference order favours the
+// markets the user asked for (overs, then combos, then BTTS), breaking
+// ties by probability. Returns { key, label, probability } or null.
+function pickRecommendedMarket(m) {
+  const candidates = [
+    ["over25", "Over 2.5"],
+    ["over15", "Over 1.5"],
+    ["over35", "Over 3.5"],
+    ["homeOrOver25", "Home win or Over 2.5"],
+    ["awayOrOver25", "Away win or Over 2.5"],
+    ["drawOrOver25", "Draw or Over 2.5"],
+    ["homeAndOver25", "Home win & Over 2.5"],
+    ["awayAndOver25", "Away win & Over 2.5"],
+    ["bttsYes", "Both teams to score"],
+    ["under25", "Under 2.5"],
+  ];
+  let best = null;
+  for (const [key, label] of candidates) {
+    const p = m[key];
+    if (!Number.isFinite(p)) continue;
+    if (!best || p > best.probability) best = { key, label, probability: p };
+  }
+  return best;
+}
+
 // ---------------------------------------------------------------------------
 // Public pipeline
 // ---------------------------------------------------------------------------
@@ -312,7 +383,16 @@ export function predictMatch(homeStats, awayStats, leagueAvgs, h2h, odds, opts =
   // 4. calibration
   const oddsWeight = opts.oddsWeight !== undefined ? opts.oddsWeight : 0.75;
   const cal = calibrate(probs, odds, oddsWeight);
-  probs = cal.probs;
+  probs = { ...cal.probs, matrix: probs.matrix, matrixTotal: probs.matrixTotal };
+
+  // 4b. goals markets (computed from the uncalibrated scoreline matrix —
+  // calibration blends 1X2 only; totals come straight from expected goals).
+  const markets = goalsMarkets(probs);
+  const marketPcts = {};
+  for (const [k, v] of Object.entries(markets)) {
+    marketPcts[k] = Math.round(v * 1000) / 10;
+  }
+  const recommendedMarket = pickRecommendedMarket(marketPcts);
 
   // 5. output
   const [homeWin, draw, awayWin] = toPercentages(probs.pHome, probs.pDraw, probs.pAway);
@@ -345,5 +425,7 @@ export function predictMatch(homeStats, awayStats, leagueAvgs, h2h, odds, opts =
       home: Math.round(feats.xgHome * 100) / 100,
       away: Math.round(feats.xgAway * 100) / 100,
     },
+    markets: marketPcts,
+    recommendedMarket,
   };
 }
