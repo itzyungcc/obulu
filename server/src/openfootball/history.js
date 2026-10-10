@@ -88,3 +88,77 @@ export function historyCoverage() {
     return 0;
   }
 }
+
+// League-average goals, computed from local results. Shape matches the
+// provider's getLeagueAvgs: { avgHomeGoals, avgAwayGoals, credible }.
+// Returns null when local data is thin.
+export function getLocalLeagueAvgs(leagueCode) {
+  if (!leagueCode) return null;
+  let row;
+  try {
+    row = db
+      .prepare(
+        `SELECT COUNT(*) AS n,
+                AVG(ft_home) AS avgH, AVG(ft_away) AS avgA
+         FROM openfootball_results
+         WHERE league_code = ?
+           AND ft_home IS NOT NULL AND ft_away IS NOT NULL`
+      )
+      .get(leagueCode);
+  } catch {
+    return null;
+  }
+  if (!row || Number(row.n) < 50) return null;
+  const avgH = Number(row.avgH);
+  const avgA = Number(row.avgA);
+  if (!Number.isFinite(avgH) || !Number.isFinite(avgA) || avgH <= 0 || avgA <= 0) return null;
+  // True home/away averages from the data — more accurate than the
+  // provider's per-team estimate with a fixed split.
+  return { avgHomeGoals: avgH, avgAwayGoals: avgA, credible: true, source: "openfootball" };
+}
+
+// Head-to-head between two teams from local results. Shape matches the
+// provider contract: { played, homeWins, draws, awayWins, lastMeetings }.
+// homeWins/draws/awayWins are from the perspective of the queried home team.
+// Returns null when fewer than 2 past meetings are found.
+export function getLocalHeadToHead(homeName, awayName, { limit = 10 } = {}) {
+  const hk = normalizeTeamName(homeName);
+  const ak = normalizeTeamName(awayName);
+  if (!hk || !ak || hk === ak) return null;
+  let rows;
+  try {
+    rows = db
+      .prepare(
+        `SELECT match_date, team1, team2, team1_key, team2_key, ft_home, ft_away
+         FROM openfootball_results
+         WHERE ((team1_key = ? AND team2_key = ?) OR (team1_key = ? AND team2_key = ?))
+           AND ft_home IS NOT NULL AND ft_away IS NOT NULL
+         ORDER BY match_date DESC
+         LIMIT ?`
+      )
+      .all(hk, ak, ak, hk, limit);
+  } catch {
+    return null;
+  }
+  if (!rows || rows.length < 2) return null;
+
+  let homeWins = 0, draws = 0, awayWins = 0;
+  const lastMeetings = [];
+  for (const r of rows) {
+    // Was the queried home team actually at home in this meeting?
+    const queriedHomeWasHome = r.team1_key === hk;
+    const hs = r.ft_home, as = r.ft_away;
+    const homeWon = hs > as;
+    if (hs === as) draws++;
+    else if ((homeWon && queriedHomeWasHome) || (!homeWon && !queriedHomeWasHome)) homeWins++;
+    else awayWins++;
+    lastMeetings.push({
+      date: r.match_date,
+      home: r.team1,
+      away: r.team2,
+      scoreH: hs,
+      scoreA: as,
+    });
+  }
+  return { played: rows.length, homeWins, draws, awayWins, lastMeetings, source: "openfootball" };
+}

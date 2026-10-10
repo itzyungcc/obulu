@@ -17,7 +17,8 @@ const RAW_BASE =
   "https://raw.githubusercontent.com/openfootball/football.json/master";
 
 // football.json file key -> football-data.org competition id.
-const LEAGUES = {
+// Exported so history lookups can map a competition id back to a file key.
+export const LEAGUES = {
   "en.1": 2021, // Premier League
   "es.1": 2014, // La Liga
   "it.1": 2019, // Serie A

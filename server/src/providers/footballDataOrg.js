@@ -343,6 +343,16 @@ async function cachedStandings(leagueId) {
 }
 
 export async function getLeagueAvgs(leagueId) {
+  // Prefer free local history: league averages barely move week to week.
+  try {
+    const { LEAGUES } = await import("../openfootball/sync.js");
+    const { getLocalLeagueAvgs } = await import("../openfootball/history.js");
+    const code = Object.keys(LEAGUES).find((k) => String(LEAGUES[k]) === String(idOf(leagueId)));
+    if (code) {
+      const local = getLocalLeagueAvgs(code);
+      if (local) return local;
+    }
+  } catch { /* fall through to provider */ }
   const json = await req(`/competitions/${idOf(leagueId)}/standings`);
   const table = ((json.standings || []).find((s) => s.type === "TOTAL") || {}).table || [];
   let tot = 0, n = 0;
@@ -355,7 +365,17 @@ export async function getLeagueAvgs(leagueId) {
   return { avgHomeGoals: avg * 0.56, avgAwayGoals: avg * 0.44, credible: true };
 }
 
-export async function getHeadToHead() {
+export async function getHeadToHead(homeId, awayId, homeName = null, awayName = null) {
+  // football-data.org has no h2h endpoint; the local OpenFootball history
+  // is the only source. Returns the empty shape when names are unknown
+  // or local data is thin (callers treat it as "no h2h signal").
+  if (homeName && awayName) {
+    try {
+      const { getLocalHeadToHead } = await import("../openfootball/history.js");
+      const local = getLocalHeadToHead(homeName, awayName);
+      if (local) return local;
+    } catch { /* fall through */ }
+  }
   // Not available on football-data.org.
   return { played: 0, homeWins: 0, draws: 0, awayWins: 0, lastMeetings: [] };
 }

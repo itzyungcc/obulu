@@ -144,4 +144,69 @@ await check("historyCoverage counts distinct teams", async () => {
   assert.ok(history.historyCoverage() >= 1, "teams covered");
 });
 
+await check("getLocalLeagueAvgs computes from local results", async () => {
+  db.prepare("DELETE FROM openfootball_results").run();
+  const now = new Date().toISOString();
+  const ins = db.prepare(`
+    INSERT INTO openfootball_results
+      (league_code, season, competition_id, match_date, round,
+       team1, team2, team1_key, team2_key, ft_home, ft_away, synced_at)
+    VALUES ('en.1', '2025-26', 2021, ?, 'Matchday 1', ?, ?, ?, ?, ?, ?, ?)`);
+  // 60 matches: total goals 150 -> avg 2.5 per game.
+  for (let i = 0; i < 60; i++) {
+    const d = `2025-08-${String((i % 28) + 1).padStart(2, "0")}`;
+    ins.run(d, `Home${i} FC`, `Away${i} FC`, `home${i} fc`, `away${i} fc`, 2, 1, now);
+  }
+  const avgs = history.getLocalLeagueAvgs("en.1");
+  assert.ok(avgs, "avgs returned");
+  // All 60 test matches were 2-1: true averages are 2.0 home / 1.0 away.
+  assert.ok(Math.abs(avgs.avgHomeGoals - 2.0) < 0.01, `avgHomeGoals=${avgs.avgHomeGoals}`);
+  assert.ok(Math.abs(avgs.avgAwayGoals - 1.0) < 0.01, `avgAwayGoals=${avgs.avgAwayGoals}`);
+  assert.strictEqual(avgs.credible, true);
+  assert.strictEqual(history.getLocalLeagueAvgs("xx.9"), null, "unknown league -> null");
+});
+
+await check("getLocalLeagueAvgs needs 50+ matches", async () => {
+  db.prepare("DELETE FROM openfootball_results").run();
+  const now = new Date().toISOString();
+  db.prepare(`
+    INSERT INTO openfootball_results
+      (league_code, season, competition_id, match_date, round,
+       team1, team2, team1_key, team2_key, ft_home, ft_away, synced_at)
+    VALUES ('fr.1', '2025-26', 2015, '2025-08-01', 'J1',
+      'Paris FC', 'Lyon FC', 'paris fc', 'lyon fc', 1, 1, ?)`)
+    .run(now);
+  assert.strictEqual(history.getLocalLeagueAvgs("fr.1"), null, "thin data -> null");
+});
+
+await check("getLocalHeadToHead finds past meetings", async () => {
+  db.prepare("DELETE FROM openfootball_results").run();
+  const now = new Date().toISOString();
+  const ins = db.prepare(`
+    INSERT INTO openfootball_results
+      (league_code, season, competition_id, match_date, round,
+       team1, team2, team1_key, team2_key, ft_home, ft_away, synced_at)
+    VALUES ('en.1', '2025-26', 2021, ?, 'Matchday 1', ?, ?, ?, ?, ?, ?, ?)`);
+  const { normalizeTeamName } = await import("../src/automation/normalizer.js");
+  const games = [
+    ["2025-09-01", "Arsenal FC", "Chelsea FC", 2, 0], // Arsenal home win
+    ["2026-02-01", "Chelsea FC", "Arsenal FC", 1, 1], // draw
+    ["2026-04-01", "Arsenal FC", "Chelsea FC", 0, 3], // Arsenal home loss
+  ];
+  for (const [d, t1, t2, h, a] of games) {
+    ins.run(d, t1, t2, normalizeTeamName(t1), normalizeTeamName(t2), h, a, now);
+  }
+  const h2h = history.getLocalHeadToHead("Arsenal", "Chelsea FC");
+  assert.ok(h2h, "h2h returned");
+  assert.strictEqual(h2h.played, 3);
+  assert.strictEqual(h2h.homeWins, 1, "Arsenal won 1 as queried-home");
+  assert.strictEqual(h2h.draws, 1);
+  assert.strictEqual(h2h.awayWins, 1);
+  assert.strictEqual(h2h.lastMeetings.length, 3);
+  assert.strictEqual(h2h.lastMeetings[0].date, "2026-04-01", "most recent first");
+  // Too few meetings -> null.
+  assert.strictEqual(history.getLocalHeadToHead("Arsenal", "Liverpool FC"), null);
+  assert.strictEqual(history.getLocalHeadToHead("Arsenal", "Arsenal FC"), null, "same team -> null");
+});
+
 console.log(`\nopenfootball: ${passed} checks passed${process.exitCode ? " (with failures)" : ""}.`);

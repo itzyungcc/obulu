@@ -239,9 +239,9 @@ async function computeAnalysis(provider, matchId) {
   if (!match) return null;
 
   const settled = await Promise.allSettled([
-      provider.getTeamStats(match.home.id, match.league.id),
-      provider.getTeamStats(match.away.id, match.league.id),
-      provider.getHeadToHead(match.home.id, match.away.id),
+      provider.getTeamStats(match.home.id, match.league.id, match.home.name),
+      provider.getTeamStats(match.away.id, match.league.id, match.away.name),
+      provider.getHeadToHead(match.home.id, match.away.id, match.home.name, match.away.name),
       provider.getStandings(match.league.id),
       provider.getInjuries(match.home.id, match.league.id),
       provider.getInjuries(match.away.id, match.league.id),
@@ -313,7 +313,7 @@ async function computePrediction(provider, matchId) {
   // Best-effort auxiliaries: prediction must still work without them.
   // h2h/leagueAvgs are independent -> concurrent, not sequential.
   const [h2h, leagueAvgs] = await Promise.all([
-    provider2.getHeadToHead(match.home.id, match.away.id).catch(() => null),
+    provider2.getHeadToHead(match.home.id, match.away.id, match.home.name, match.away.name).catch(() => null),
     provider2.getLeagueAvgs(match.league.id).catch(() => null),
   ]);
   let odds = null;
